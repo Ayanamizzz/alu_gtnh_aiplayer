@@ -46,6 +46,8 @@ setup() {
         -e "s/^enable-rcon=.*/enable-rcon=true/" \
         -e "s/^motd=.*/motd=AI player test instance/" \
         "$props"
+    # The pack's own server.properties ends without a newline: what is appended must not join its last line.
+    [[ -z $(tail -c1 "$props") ]] || echo >>"$props"
     grep -q '^enable-rcon=' "$props" || echo "enable-rcon=true" >>"$props"
     grep -q '^rcon.port=' "$props" || echo "rcon.port=$RCON_PORT" >>"$props"
     grep -q '^rcon.password=' "$props" || echo "rcon.password=$pass" >>"$props"
