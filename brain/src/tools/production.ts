@@ -32,6 +32,8 @@ function summaryText(summary: PlannerRecordSummaryView): string {
   return [
     `Analysis ${summary.id}: ${summary.status} (execution: ${summary.outcome}).`,
     'Static calculation only; no game action was requested. External supply, machine availability and settings are assumptions, not observed world facts.',
+    ...(summary.outcome !== 'calculated' || summary.status === 'failed' || summary.status === 'invalid'
+      ? ['Goals and external supply have not been reliably assessed. Empty lists below do not mean the plan is satisfied.'] : []),
     ...(summary.error ? [`ERROR ${summary.error.code}: ${summary.error.message}`] : []),
     ...(summary.totalEuT !== undefined ? [`Total power: ${summary.totalEuT} EU/t.`] : []),
     ...facts('Unmet goals', summary.unmetGoals, 'goals'),

@@ -112,10 +112,19 @@ function sectionItems(record: PlannerRecord, section: PlannerReadSection): Itera
     case 'shortfalls': return array(explanation.shortfalls)
     case 'externalInputs': return array(explanation.externalInputs)
     case 'externalOutputs': return array(explanation.externalOutputs)
-    case 'diagnostics': return [
-      ...(array(explanation.issues).length ? array(explanation.issues) : record.issues),
-      ...array(report.bottlenecks), ...(record.error ? [record.error] : []),
-    ]
+    case 'diagnostics': {
+      const plan = object(report.plan)
+      return [
+        ...(array(explanation.issues).length ? array(explanation.issues) : record.issues),
+        ...array(report.bottlenecks),
+        ...array(plan.notes).map((data) => ({ kind: 'native-plan-note', data })),
+        ...(plan.failure ? [{ kind: 'native-plan-failure', data: plan.failure }] : []),
+        ...array(plan.unanchored).map((id) => ({ kind: 'native-unanchored', id })),
+        ...array(plan.unmetDrawers).map((id) => ({ kind: 'native-unmet-drawer', id })),
+        ...array(object(report.clogLocks).locks).map((data) => ({ kind: 'native-clog-lock', data })),
+        ...(record.error ? [record.error] : []),
+      ]
+    }
     case 'assumptions': return array(explanation.assumptions)
     case 'native': return jsonEntries(record.report)
     case 'record': return jsonEntries(record)
@@ -132,6 +141,8 @@ export class PlannerWorkspace {
   private readonly packdata: PackData | undefined
   private readonly engine: PlannerWorkspaceOptions['engine']
   private readonly now: () => number
+  private readonly pending = new Set<Promise<PlannerRecord>>()
+  private closed = false
 
   constructor(options: PlannerWorkspaceOptions) {
     this.store = new PlannerStore(options.directory)
@@ -174,7 +185,15 @@ export class PlannerWorkspace {
     }
   }
 
-  async solve(project: unknown, options: PlannerSolveOptions = {}): Promise<PlannerRecord> {
+  solve(project: unknown, options: PlannerSolveOptions = {}): Promise<PlannerRecord> {
+    if (this.closed) return Promise.reject(new PlannerStoreError('closed', 'Planner workspace is closed; saved analyses remain readable.'))
+    const operation = this.solveAndSave(project, options)
+    this.pending.add(operation)
+    void operation.then(() => this.pending.delete(operation), () => this.pending.delete(operation))
+    return operation
+  }
+
+  private async solveAndSave(project: unknown, options: PlannerSolveOptions): Promise<PlannerRecord> {
     // Snapshot before the first await: the caller cannot change a queued analysis under us.
     const original = copyPlannerJson(project)
     if (options.parentId !== undefined) await this.store.get(options.parentId)
@@ -234,7 +253,12 @@ export class PlannerWorkspace {
   list(options: { offset?: number; limit?: number } = {}) { return this.store.list(options) }
   export(id: string) { return this.store.export(id) }
   info() { return this.engine.info() }
-  async close(): Promise<void> { await this.engine.close() }
+  async close(): Promise<void> {
+    this.closed = true
+    await this.engine.close()
+    // Shutdown must also wait for the interrupted analyses' atomic writes, not just the worker exit.
+    await Promise.allSettled([...this.pending])
+  }
 }
 
 function rejectedSummary(status: 'invalid' | 'failed', issues: unknown[]): Omit<ReportSummary, 'issues'> & { issues: unknown[] } {
