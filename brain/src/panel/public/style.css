@@ -4,6 +4,8 @@
      --program run_program 当场跑的程序       --body    身体在游戏里做的任务
      --accent  能点的东西、你在面板上说的话     --ok / --warn / --bad 正常、要留意、出错 */
 
+@import url('./production.css');
+
 :root {
   color-scheme: dark;
   --bg: #0f1113;

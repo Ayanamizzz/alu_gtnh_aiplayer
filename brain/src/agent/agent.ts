@@ -18,6 +18,7 @@ import type { HistoryStore, Turn } from '../store/history.ts'
 import { speakInChat } from '../tools/chat.ts'
 import { clip, compactJson } from '../tools/format.ts'
 import type { DesignWorkspace } from '../design/index.ts'
+import type { PlannerWorkspace } from '../planner/workspace.ts'
 import type { PackData } from '../packdata/index.ts'
 import { LEGACY_TOOLS, QUERY_TOOLS, QuestProgressCache, SPEAKING_TOOLS, SurroundingsCache, modelToolSpecs, runTool } from '../tools/index.ts'
 import type { HelperAccess, LineName, ManualAccess, MemoryAccess, ProgramToolResult, ReminderAccess, Tool, ToolContext, ToolResult } from '../tools/index.ts'
@@ -247,6 +248,7 @@ export interface AgentDeps {
   packdata?: PackData
   /** 自己出设计用的：跑程序的沙箱、图纸草稿、主人传的图片。 */
   design?: DesignWorkspace
+  planner?: PlannerWorkspace
   /** 例程的各项上限；不给用默认的（时长那两项以 settings 里的为准）。 */
   routineLimits?: Partial<RoutineLimits>
   /** 程序（例程、run_program）每次运行的全量记录落在哪；不给就不落盘。 */
@@ -858,7 +860,7 @@ export class Agent {
    * run_program 的程序里调一个工具：只许查询类的，走和模型调工具同一条路。
    * 每一次调用记进这个程序自己的运行记录（run-log.ts）：对话日志里是一条汇总加出错的那几次，不是每次两条。
    */
-  private async queryFromProgram(name: string, input: unknown): Promise<ProgramToolResult> {
+  private async queryFromProgram(name: string, input: unknown, signal?: AbortSignal): Promise<ProgramToolResult> {
     const record = this.programRun
     const n = ++this.programCalls
     const since = this.now()
@@ -870,7 +872,7 @@ export class Agent {
       const act = this.line === 'talk' ? 'Acting is the worker line\'s: hand the job over with tell_worker.' : 'To act, start the program with start_routine.'
       out = { ok: false, text: `${name} cannot be called from run_program: a program there can only look things up (${lookups.join(', ')}). ${act}` }
     } else {
-      const res = await runTool(this.deps.tools, this.toolContext(this.deps.settings().botName), name, input, { maxResultChars: this.deps.settings().toolResultMaxChars })
+      const res = await runTool(this.deps.tools, this.toolContext(this.deps.settings().botName, false, signal), name, input, { maxResultChars: this.deps.settings().toolResultMaxChars })
       out = { ok: res.isError !== true, text: res.content, ...(res.data !== undefined ? { data: res.data } : {}) }
     }
     record?.call({ n, tool: name, input, ok: out.ok, text: out.text, ms: this.now() - since })
@@ -1181,7 +1183,7 @@ export class Agent {
     const toolSpecs = modelToolSpecs(this.deps.tools, { canSee, line: this.line })
     // 到了步数上限以后的收尾那一步里还会执行的：这条线在游戏里说话的工具（对话线的 say、whisper；干活线没有）
     const speaking = toolSpecs.filter((t) => SPEAKING_TOOLS.includes(t.name)).map((t) => t.name)
-    const ctx = this.toolContext(settings.botName, canSee)
+    const ctx = this.toolContext(settings.botName, canSee, signal)
     let prior = this.priorMessages()
     this.turnSpoke = false
     let finalText = ''
@@ -2023,11 +2025,12 @@ export class Agent {
     }
   }
 
-  private toolContext(botName: string, canSee = false): ToolContext {
+  private toolContext(botName: string, canSee = false, signal?: AbortSignal): ToolContext {
     const feedback = this.deps.feedback
     const links = this.deps.links
     return {
       botName,
+      ...(signal ? { signal } : {}),
       line: this.line,
       programSlot: this.line,
       ...(this.line === 'talk' && links ? { worker: this.workerAccess(links) } : {}),
@@ -2043,6 +2046,7 @@ export class Agent {
       manuals: this.deps.manuals,
       ...(this.deps.packdata ? { packdata: this.deps.packdata } : {}),
       ...(this.deps.design ? { design: this.deps.design } : {}),
+      ...(this.deps.planner ? { planner: this.deps.planner } : {}),
       ...(this.deps.methods ? { methods: this.deps.methods } : {}),
       ...(this.deps.todo ? { todo: this.deps.todo } : {}),
       ...(feedback
@@ -2062,7 +2066,7 @@ export class Agent {
       surroundings: this.surroundings,
       ...(this.routine ? { routines: this.routineAccess() } : {}),
       // 程序里调查询类的工具：两条线都行（有跑程序的沙箱才有）
-      ...(this.deps.design ? { queryFromProgram: (name: string, input: unknown) => this.queryFromProgram(name, input) } : {}),
+      ...(this.deps.design ? { queryFromProgram: (name: string, input: unknown) => this.queryFromProgram(name, input, signal) } : {}),
       now: () => this.now(),
       // 查任务书进度默认看谁的：主人名单里的第一个；没有名单就是刚才跟它说话的人
       defaultPlayer: () => this.deps.settings().owners[0] ?? this.shared.lastSpeaker,

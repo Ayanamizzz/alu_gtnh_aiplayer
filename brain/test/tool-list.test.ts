@@ -14,7 +14,7 @@ import type { AgentSettings } from '../src/agent/agent.ts'
 import { BridgeError } from '../src/bridge/protocol.ts'
 import { DesignWorkspace } from '../src/design/index.ts'
 import { loadPackData } from '../src/packdata/index.ts'
-import { LINE_TOOLS, modelToolSpecs } from '../src/tools/index.ts'
+import { LIBRARY_INDEX_HEAD, LINE_TOOLS, modelToolSpecs } from '../src/tools/index.ts'
 import type { LineName } from '../src/tools/index.ts'
 import { DEFAULT_MANUALS_DIR, chat, lineCalls, makeAgent, modelCalls, taskEnded, told } from './agent-harness.ts'
 import type { AgentHarness } from './agent-harness.ts'
@@ -102,7 +102,7 @@ const ACTING = [
 const WORK_TOOLS_WITH_VISION = ['report', ...LOOKUPS, 'run_program', ...ACTING, ...NOTES]
 const TALK_TOOLS_WITH_VISION = ['say', 'whisper', 'tell_worker', 'worker_status', 'stop_work', 'start_helper', 'helper_status', ...LOOKUPS, 'run_program', ...NOTES]
 const TOOLS_WITH_VISION: Record<LineName, string[]> = { talk: TALK_TOOLS_WITH_VISION, work: WORK_TOOLS_WITH_VISION }
-const LIBRARY = ['recent_chat', 'read_log', 'list_stock', 'list_drawers', 'list_entities', 'find_uses', 'list_quest_lines', 'probe_block', 'check_blueprint', 'read_blueprint', 'haul_items', 'read_blocks', 'find_structure', 'check_structure', 'total_materials']
+const LIBRARY = ['recent_chat', 'read_log', 'list_stock', 'list_drawers', 'list_entities', 'find_uses', 'list_quest_lines', 'probe_block', 'check_blueprint', 'read_blueprint', 'haul_items', 'read_blocks', 'find_structure', 'check_structure', 'total_materials', 'production_plan']
 const OLD_NAMES = ['list_blueprints', 'list_drafts', 'list_images', 'set_home', 'list_homes', 'join_team']
 
 describe('模型拿到的工具清单', () => {
@@ -169,13 +169,15 @@ describe('模型拿到的工具清单', () => {
         const names = tools.map((tool) => tool.name)
         for (const name of [...LIBRARY, ...OLD_NAMES]) assert.equal(names.includes(name), false, name)
         const run = tools.find((tool) => tool.name === 'run_program')!.description
-        const index = run.slice(run.indexOf('\nLibrary functions') + 1)
+        const start = run.indexOf(`\n${LIBRARY_INDEX_HEAD}`)
+        assert.ok(start >= 0, 'run_program must include the library index')
+        const index = run.slice(start + 1)
         // 上限从 2000 调到 2200：多了 read_log 的一行（约 200 字符）——历史压缩把较早的轮换成交接记录以后，靠它翻回原始记录
         // 上限从 2200 调到 2400：total_materials 的那一行长了约 120 字符——它现在照基地的做法展开整棵树、扣库存，结果里多了没定的、还缺的、活儿清单
         // f30 list_entities 增加140字符；不能看图的work实际2483，完整身份/精查入口保留在库索引。
         assert.ok(index.length <= 2550, `the index is ${index.length} characters`)
         const lines = index.split('\n')
-        assert.equal(lines[0], 'Library functions are not in your tool list; a program calls them like tools. To read one: return (await tool(name, input)).text; to compute with one, use .data. Below: name {input}: what -> data')
+        assert.equal(lines[0], LIBRARY_INDEX_HEAD)
         // 对话线的索引里只有只查不动的：会开任务的 haul_items 不在
         const library = line === 'talk' ? LIBRARY.filter((name) => name !== 'haul_items') : LIBRARY
         // 不能看图时，没进清单的 view_area、view_image 也列在索引里：它们给的文字照样拿得到
@@ -374,18 +376,18 @@ describe('库函数：不在清单里，在程序里调', () => {
 
   it('调了一个不存在的名字：报错里分两组列出能调的——这条线的工具，和库函数；看图的两个按它能不能看图归组', async (t) => {
     const blind = (await modelCalls(setup(t, { vision: false }), 'fly_to_the_moon')).content
-    assert.match(blind, /^There is no tool named "fly_to_the_moon"\. Your tools: report, get_status, .*, report_problem\. Library functions \(in a program: await tool\(name, input\)\): recent_chat, read_log, list_stock, list_drawers, list_entities, find_uses, list_quest_lines, probe_block, check_blueprint, read_blueprint, haul_items, read_blocks, find_structure, check_structure, total_materials, view_area, view_image\.$/)
+    assert.match(blind, /^There is no tool named "fly_to_the_moon"\. Your tools: report, get_status, .*, report_problem\. Library functions \(in a program: await tool\(name, input\)\): recent_chat, read_log, list_stock, list_drawers, list_entities, find_uses, list_quest_lines, probe_block, check_blueprint, read_blueprint, haul_items, read_blocks, find_structure, check_structure, total_materials, production_plan, view_area, view_image\.$/)
     assert.doesNotMatch(/Your tools: (.*)\. Library functions/.exec(blind)![1]!, /view_area|view_image|\bsay\b|whisper/)
-    // 1100 → 1150：干活线多了 press_key、hold_keys 两个名字（实际 1,109）
-    assert.ok(blind.length < 1150, `${blind.length} characters`)
+    // Include the new calculator's name in this one-off diagnostic; per-turn tool/index budgets are unchanged.
+    assert.ok(blind.length < 1170, `${blind.length} characters`)
     for (const old of OLD_NAMES) assert.equal(blind.includes(old), false, old)
 
     const seeing = (await modelCalls(setup(t, { vision: true }), 'fly_to_the_moon')).content
-    assert.match(seeing, /Your tools: .*\bview_area\b.*\bview_image\b.*\. Library functions \(in a program: await tool\(name, input\)\): recent_chat, read_log, list_stock, .*, total_materials\.$/)
+    assert.match(seeing, /Your tools: .*\bview_area\b.*\bview_image\b.*\. Library functions \(in a program: await tool\(name, input\)\): recent_chat, read_log, list_stock, .*, total_materials, production_plan\.$/)
 
     // 对话线：列的是它自己的工具和只查不动的库函数
     const talk = (await lineCalls(setup(t, { vision: false }), 'talk', 'fly_to_the_moon')).content
-    assert.match(talk, /^There is no tool named "fly_to_the_moon"\. Your tools: say, whisper, tell_worker, worker_status, stop_work, start_helper, helper_status, get_status, .*, report_problem\. Library functions \(in a program: await tool\(name, input\)\): recent_chat, read_log, list_stock, .*, total_materials, view_area, view_image\.$/)
+    assert.match(talk, /^There is no tool named "fly_to_the_moon"\. Your tools: say, whisper, tell_worker, worker_status, stop_work, start_helper, helper_status, get_status, .*, report_problem\. Library functions \(in a program: await tool\(name, input\)\): recent_chat, read_log, list_stock, .*, total_materials, production_plan, view_area, view_image\.$/)
     assert.doesNotMatch(talk, /haul_items|go_to|start_routine/)
   })
 

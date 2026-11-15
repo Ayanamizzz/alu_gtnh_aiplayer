@@ -8,11 +8,13 @@
 import { state } from './data.js'
 import { showGuide } from './knowledge-guide.js'
 import { showMethods } from './knowledge-methods.js'
+import { showProduction } from './knowledge-production.js'
 import { act, api, badge, bus, button, dateTime, empty, field, h, kv, loadError, num, progressBar, put, subTabs, TASK_STATES, when } from './ui.js'
 
 const TABS = [
   { id: 'memory', label: '记忆' },
   { id: 'methods', label: '基地的做法' },
+  { id: 'production', label: '产线规划' },
   { id: 'manuals', label: '手册' },
   { id: 'guide', label: '指南' },
   { id: 'feedback', label: '意见簿' },
@@ -336,6 +338,7 @@ function show(tab, arg) {
   for (const b of root.querySelectorAll('.subtabs button')) b.setAttribute('aria-selected', String(b.dataset.id === tab))
   if (tab === 'memory') loadMemory()
   else if (tab === 'methods') showMethods(target)
+  else if (tab === 'production') showProduction(target, arg)
   else if (tab === 'manuals') loadManuals()
   else if (tab === 'guide') showGuide(target, arg)
   else loadFeedback()

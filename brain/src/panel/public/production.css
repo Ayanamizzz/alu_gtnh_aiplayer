@@ -1,0 +1,21 @@
+.production-layout { display: grid; grid-template-columns: minmax(200px, 270px) minmax(0, 1fr); gap: 20px; align-items: start; }
+.production-link { display: flex; flex-direction: column; gap: 7px; margin-bottom: 8px; padding: 12px; text-decoration: none; color: inherit; overflow-wrap: anywhere; }
+.production-link:hover, .production-link.selected { border-color: var(--accent); }
+.production-link.selected { background: color-mix(in srgb, var(--accent) 8%, var(--panel)); }
+.production-report { min-width: 0; }
+.production-actions, .production-pagination { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 16px 0; }
+.production-actions select { min-width: 160px; }
+.production-actions a { color: var(--accent); }
+.production-json { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; overflow: auto; font-size: 12px; line-height: 1.5; padding: 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 5px; }
+.production-entry { margin: 12px 0; min-width: 0; overflow-wrap: anywhere; }
+.production-entries .production-entry + .production-entry { border-top: 1px solid var(--line); padding-top: 12px; }
+.production-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.production-table th, .production-table td { padding: 10px 8px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
+.production-table code { overflow-wrap: anywhere; }
+.production-table details { min-width: 130px; }
+.production-report .table-scroll { overflow-x: auto; }
+.production-warning { border-left: 3px solid var(--warn); padding: 10px 12px; color: var(--warn); background: color-mix(in srgb, var(--warn) 6%, var(--panel)); overflow-wrap: anywhere; }
+@media (max-width: 900px) {
+  .production-layout { grid-template-columns: 1fr; }
+  .production-layout.has-selected .production-report { order: -1; }
+}

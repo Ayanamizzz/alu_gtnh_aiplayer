@@ -15,6 +15,9 @@ import { ItemTable, StructureBook, TooltipTable, loadPackData } from '../src/pac
 import type { GuideBook, PackData, TextureAtlas } from '../src/packdata/index.ts'
 import { PanelLive } from '../src/panel/live.ts'
 import { PanelServer } from '../src/panel/server.ts'
+import { PlannerEngine } from '../src/planner/engine.ts'
+import { NATIVE_PROJECT_EXAMPLE } from '../src/planner/model.ts'
+import { PlannerWorkspace } from '../src/planner/workspace.ts'
 import { ActivityLog } from '../src/store/activity-log.ts'
 import { ConfigStore, overridesFromEnv } from '../src/store/config.ts'
 import { FeedbackStore } from '../src/store/feedback.ts'
@@ -40,7 +43,7 @@ const FULL_KEY = 'sk-live-ABCDEFGHIJKLMNOP-9876'
  * lines：给了就接上真的两条线（agent-harness 的 makeAgent 造的：真的 Lines、两份历史、假的游戏和假的模型），
  * 不给就是只记下收到什么的桩。
  */
-async function setup(t: { after(fn: () => void | Promise<void>): void }, env: NodeJS.ProcessEnv = {}, opts: { textures?: TextureAtlas; structures?: StructureBook; guide?: GuideBook; tooltips?: TooltipTable; log?: ActivityLog; dir?: { dir: string; cleanup(): void }; lines?: AgentHarness; icons?: ItemIcons; packdata?: PackData } = {}) {
+async function setup(t: { after(fn: () => void | Promise<void>): void }, env: NodeJS.ProcessEnv = {}, opts: { textures?: TextureAtlas; structures?: StructureBook; guide?: GuideBook; tooltips?: TooltipTable; log?: ActivityLog; dir?: { dir: string; cleanup(): void }; lines?: AgentHarness; icons?: ItemIcons; packdata?: PackData; planner?: PlannerWorkspace } = {}) {
   const tmp = opts.dir ?? (opts.lines ? { dir: opts.lines.dir, cleanup: opts.lines.cleanup } : tmpDir())
   const config = new ConfigStore(tmp.dir, overridesFromEnv(env))
   const game = opts.lines?.game ?? new FakeGame()
@@ -66,6 +69,7 @@ async function setup(t: { after(fn: () => void | Promise<void>): void }, env: No
     ...(opts.lines ? { talkHistory: opts.lines.talkHistory } : {}),
     manuals,
     design,
+    ...(opts.planner ? { planner: opts.planner } : {}),
     feedback,
     pictures,
     ...(opts.textures ? { textures: opts.textures } : {}),
@@ -102,6 +106,7 @@ async function setup(t: { after(fn: () => void | Promise<void>): void }, env: No
   const { port } = await panel.listen('127.0.0.1', 0)
   t.after(async () => {
     await panel.close()
+    await opts.planner?.close()
     tmp.cleanup()
   })
   const origin = `http://127.0.0.1:${port}`
@@ -136,6 +141,54 @@ async function setup(t: { after(fn: () => void | Promise<void>): void }, env: No
   return { tmp, config, game, log, memory, manuals, design, feedback, pictures, clock, events, tested, asked, remote, call, login, origin, port, cookie: () => cookie, cancels: () => expectedCancels, setCookie: (c: string) => (cookie = c) }
 }
 
+describe('面板：产线静态分析', () => {
+  it('读取真实计算记录、完整原版计划与报告下载；分页和错误明确，HTTP入口不启动计算或身体动作', async (t) => {
+    const tmp = tmpDir()
+    const engine = new PlannerEngine()
+    const planner = new PlannerWorkspace({ directory: path.join(tmp.dir, 'production-plans'), engine })
+    const s = await setup(t, {}, { dir: tmp, planner })
+    const project = structuredClone(NATIVE_PROJECT_EXAMPLE)
+    project.name = '<img src=x onerror="window.injected=true"> native plan'
+    project.metadata = { source: 'Do not translate this native data.' }
+    const record = await planner.solve(project)
+    assert.equal(record.outcome, 'calculated')
+    await s.login()
+    const list = await s.call('GET', '/api/production?limit=1')
+    assert.equal(list.status, 200)
+    assert.equal(list.json.items[0].id, record.id)
+    assert.equal(list.json.items[0].namePreview, project.name)
+    assert.equal(list.json.items[0].explanation, undefined)
+    const page = await s.call('GET', `/api/production/record?id=${record.id}&section=machines&limit=1`)
+    assert.equal(page.status, 200)
+    assert.equal(page.json.items[0].buildMachines, 1)
+    assert.equal(page.json.summary.staticAnalysis, true)
+    assert.equal(page.json.summary.averageEuT, 2)
+    const full = await s.call('GET', `/api/production/export?id=${record.id}`)
+    assert.equal(full.status, 200)
+    assert.match(full.headers.get('content-disposition') ?? '', /attachment; filename="pp_.*\.json"/)
+    assert.deepEqual(full.json, record)
+    const original = await s.call('GET', `/api/production/export?id=${record.id}&format=project`)
+    assert.deepEqual(original.json, project)
+    for (const route of [
+      '/api/production?limit=0', '/api/production?offset=-1',
+      '/api/production/record?id=../../config.json',
+      `/api/production/record?id=${record.id}&section=not-a-section`,
+    ]) assert.equal((await s.call('GET', route)).status, 400, route)
+    assert.equal((await s.call('GET', `/api/production/record?id=pp_${'0'.repeat(32)}`)).status, 404)
+    assert.equal((await s.call('POST', '/api/production', { project })).status, 404)
+    assert.equal((await planner.list()).total, 1)
+    assert.deepEqual(s.game.calls, [])
+  })
+
+  it('旧装配没有计算模块时明确说不可用，不伪装成没有方案', async (t) => {
+    const s = await setup(t)
+    await s.login()
+    const res = await s.call('GET', '/api/production')
+    assert.equal(res.status, 503)
+    assert.equal(res.json.error.code, 'unavailable')
+  })
+})
+
 const PROVIDER = {
   kind: 'openai-chat',
   label: '主力',
@@ -152,7 +205,7 @@ describe('面板：鉴权', () => {
     assert.match(page.text, /<title>AI 玩家/)
     assert.equal((await s.call('GET', '/app.js')).status, 200)
     assert.equal((await s.call('GET', '/style.css')).status, 200)
-    for (const route of ['/api/overview', '/api/providers', '/api/bot', '/api/memory', '/api/manuals', '/api/blueprints', '/api/drafts', '/api/drafts/view?name=x', '/api/drafts/picture?name=x', '/api/drafts/model?name=x', '/api/pictures/file?id=x', '/api/pictures/model?id=x', '/api/structures', '/api/structures/model?id=x', '/api/textures/atlas.png', '/api/images', '/api/images/file?name=x', '/api/feedback', '/api/feedback/view?id=f1', '/api/feedback/export', '/api/events', '/api/log', '/api/log?before=5', '/api/status', '/api/runs', '/api/runs/records?id=r1', '/api/blueprints/read?name=x', '/api/blueprints/view?name=x', '/api/blueprints/picture?name=x', '/api/blueprints/model?name=x', '/api/live', '/api/minimap', '/api/icons/sheet?n=0', '/api/items/names?q=minecraft:dirt/0']) {
+    for (const route of ['/api/overview', '/api/providers', '/api/bot', '/api/memory', '/api/manuals', '/api/blueprints', '/api/drafts', '/api/drafts/view?name=x', '/api/drafts/picture?name=x', '/api/drafts/model?name=x', '/api/pictures/file?id=x', '/api/pictures/model?id=x', '/api/structures', '/api/structures/model?id=x', '/api/textures/atlas.png', '/api/images', '/api/images/file?name=x', '/api/feedback', '/api/feedback/view?id=f1', '/api/feedback/export', '/api/production', '/api/production/record?id=x', '/api/production/export?id=x', '/api/events', '/api/log', '/api/log?before=5', '/api/status', '/api/runs', '/api/runs/records?id=r1', '/api/blueprints/read?name=x', '/api/blueprints/view?name=x', '/api/blueprints/picture?name=x', '/api/blueprints/model?name=x', '/api/live', '/api/minimap', '/api/icons/sheet?n=0', '/api/items/names?q=minecraft:dirt/0']) {
       assert.equal((await s.call('GET', route)).status, 401, route)
     }
     assert.equal((await s.call('POST', '/api/command', { text: '回家' })).status, 401)

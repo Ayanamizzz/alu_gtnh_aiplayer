@@ -22,6 +22,7 @@ import type { DesignWorkspace } from '../design/index.ts'
 import { LlmError, keepLatestImages, textOf } from '../llm/index.ts'
 import type { GenerateRequest, GenerateResult, LlmClient, Message, ToolResultPart, UserPart } from '../llm/index.ts'
 import type { PackData } from '../packdata/index.ts'
+import type { PlannerWorkspace } from '../planner/workspace.ts'
 import type { ActivityInput, ActivityLog, ActivityModelCall } from '../store/activity-log.ts'
 import type { FeedbackStore, FeedbackToolCall } from '../store/feedback.ts'
 import type { HelperRecord, HelperState, HelperStep, HelperStore, HelperSummary } from '../store/helpers.ts'
@@ -58,6 +59,7 @@ export interface HelpersDeps {
   reminders: ReminderAccess
   packdata?: PackData
   design?: DesignWorkspace
+  planner?: PlannerWorkspace
   methods?: MethodAccess
   feedback?: FeedbackStore
   versions?(): { brain: string; mod?: string }
@@ -538,6 +540,7 @@ export class Helpers {
     return {
       botName,
       helper: id,
+      signal: r.abort.signal,
       ...(deps.workerStatus ? { worker: { tell: () => notYours, status: (detail: boolean) => deps.workerStatus!(detail), stop: async () => notYours } } : {}),
       ...(deps.chatLog ? { chatLog: deps.chatLog } : {}),
       activityLog: deps.log,
@@ -551,6 +554,7 @@ export class Helpers {
       manuals: deps.manuals,
       ...(deps.packdata ? { packdata: deps.packdata } : {}),
       ...(deps.design ? { design: deps.design } : {}),
+      ...(deps.planner ? { planner: deps.planner } : {}),
       ...(deps.methods ? { methods: deps.methods } : {}),
       ...(feedback
         ? {

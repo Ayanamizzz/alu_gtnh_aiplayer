@@ -1,0 +1,3 @@
+# Keep vendored source bytes identical to their recorded hashes, including upstream whitespace.
+brain/vendor/gtnh-planner/** linguist-vendored whitespace=-blank-at-eol,-blank-at-eof
+brain/vendor/gtnh-planner/dist/** linguist-generated

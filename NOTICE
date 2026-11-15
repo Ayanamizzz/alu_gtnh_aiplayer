@@ -4,8 +4,38 @@ Gradle wrapper) come from the GT New Horizons mod template
 (https://github.com/GTNewHorizons/ExampleMod1.7.10), which is under the MIT
 License, Copyright (c) 2021 Johann Bernhardt.
 
-This repository contains no content of the GT New Horizons modpack. The item
-table, recipe book, quest book, guide pages, icons and textures that the brain
-reads (brain/packdata/) are generated on your own machine from your own copy of
-the client pack and are not part of this repository; they stay under the
-licenses of their authors.
+The brain-side production planner directly reuses the original calculation
+implementation from GTNH Factory Flow:
+  https://github.com/jackwrichards/gtnh-factory-flow
+  Copyright (c) 2026 Samiracle64
+  Copyright (c) 2026 jackwrichards
+  MIT License
+
+Its corresponding original mod, GTNH Planner, supplies the machine catalogue
+and independent machine-calculation reference data and informs this integration:
+  https://github.com/jackwrichards/gtnh-planner-mod
+  Copyright (c) 2026 Sbancuz
+  MIT License
+
+This integration uses those original projects, not a translated release. The
+upstream calculators, schemas, data and declarations are not claimed as original
+Alu AI Player code. Pinned sources, copied-file hashes, local changes, build
+instructions and runtime hashes are recorded in:
+  brain/vendor/gtnh-planner/provenance.json
+  brain/vendor/gtnh-planner/source-files.json
+  brain/vendor/gtnh-planner/mod-files.json
+
+The calculator distribution includes HiGHS/highs-js and bundled Zod. Esbuild is
+used to generate the local bundles. Their MIT copyright and license notices are
+preserved, together with the upstream project notices, in:
+  brain/vendor/gtnh-planner/licenses/
+  brain/vendor/gtnh-planner/upstream/LICENSE
+  brain/vendor/gtnh-planner/mod/LICENSE
+
+This repository does not distribute GTNH mod jars, client/server packs or game
+textures. The local item table, recipe book, quest book, guide pages, icons and
+textures read by the brain (brain/packdata/) are generated on your own machine
+from your own copy of the client pack and are not part of this repository; they
+stay under the licenses of their authors. The planner's small upstream machine
+catalogues and calculation test fixtures are included under the source projects'
+MIT terms; they are not an export of any user's server, inventory or conversations.

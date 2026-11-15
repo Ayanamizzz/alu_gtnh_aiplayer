@@ -79,6 +79,10 @@ tools/live log | grep 口令      # 首次启动打印的面板口令
 
 以后每次更新就是一句 `tools/live deploy`（可以给一个提交或标签：`tools/live deploy v0.2.0`）。出了问题 `tools/live rollback` 回到上一个。大脑的更新不用停游戏。
 
+**产线计算器随大脑一起发布。** 保留 `brain/vendor/gtnh-planner/` 的运行文件、机器目录及许可，不能只复制 `src/`。`tools/live` 和 `tools/brain` 的完整brain打包会包含它们；没有额外npm运行安装、JDK25、客户端或联网下载步骤。所需资产和hash以 `vendor/gtnh-planner/provenance.json` 为准。大脑退出会取消并回收计算worker，未完成的安全分析会保存失败记录；方案放在共用数据目录的 `production-plans/`，回滚不会自动删除。
+
+本地配方只在启动时加载。替换packdata后必须重启脑；规划器发现文件身份变了会报 `PACKDATA_RELOAD_REQUIRED`，不能只重新describe就把旧索引认证成新资料。计算模型的固定版本与本服实际机器仍是两层，结果不能代替现场验收。
+
 目录里有什么：
 
 | | |

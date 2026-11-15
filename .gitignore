@@ -7,6 +7,8 @@
 /brain/node_modules
 # pack data generated from the client pack by tools/make-packdata.py (docs/PACKDATA.md)
 /brain/packdata/
+# worktrees may borrow the exported data through a read-only symlink
+/brain/packdata
 *.log
 .DS_Store
 # our own copy of the game client, only used to export NEI data

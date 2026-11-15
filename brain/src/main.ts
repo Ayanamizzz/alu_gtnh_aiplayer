@@ -22,6 +22,8 @@ import { loadItemIcons } from './packdata/icons.ts'
 import { loadPackData } from './packdata/index.ts'
 import { useLocalNames } from './tools/format.ts'
 import { PanelServer } from './panel/server.ts'
+import { PlannerEngine } from './planner/engine.ts'
+import { PlannerWorkspace } from './planner/workspace.ts'
 import { ActivityLog } from './store/activity-log.ts'
 import { ChatLog } from './store/chat-log.ts'
 import { RunLogStore } from './agent/run-log.ts'
@@ -171,6 +173,7 @@ async function main(): Promise<void> {
   // 物品和流体都用游戏里的中文名（身体给的是英文）
   useLocalNames(packdata.items, packdata.fluids)
   const design = new DesignWorkspace({ dataDir, packdata })
+  const planner = new PlannerWorkspace({ directory: path.join(dataDir, 'production-plans'), packdata, engine: new PlannerEngine() })
   const pictures = new PictureStore(dataDir)
 
   // ── bridge ──
@@ -266,6 +269,7 @@ async function main(): Promise<void> {
     manuals,
     packdata,
     design,
+    planner,
     feedback,
     methods,
     todo,
@@ -387,6 +391,7 @@ async function main(): Promise<void> {
     talkHistory,
     manuals,
     design,
+    planner,
     feedback,
     pictures,
     ...(packdata.textures ? { textures: packdata.textures } : {}),
@@ -437,7 +442,7 @@ async function main(): Promise<void> {
     force.unref()
     void (async () => {
       reminders.stop()
-      await agent.stop()
+      await Promise.all([agent.stop(), planner.close()])
       bridgeClient.stop()
       await panel.close()
       resumeFile.flush()

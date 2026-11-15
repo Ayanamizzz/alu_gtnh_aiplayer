@@ -18,6 +18,7 @@ import type { BridgeEvent, TaskList } from '../bridge/protocol.ts'
 import type { DesignWorkspace } from '../design/index.ts'
 import type { LlmClient } from '../llm/index.ts'
 import type { PackData } from '../packdata/index.ts'
+import type { PlannerWorkspace } from '../planner/workspace.ts'
 import type { ActivityLog } from '../store/activity-log.ts'
 import type { ChatLog } from '../store/chat-log.ts'
 import type { FeedbackStore } from '../store/feedback.ts'
@@ -79,6 +80,7 @@ export interface LinesDeps {
   manuals: ManualAccess
   packdata?: PackData
   design?: DesignWorkspace
+  planner?: PlannerWorkspace
   routineLimits?: Partial<RoutineLimits>
   runLogs?: RunLogStore
   feedback?: FeedbackStore
@@ -245,6 +247,7 @@ export class Lines {
       ...(deps.pictures ? { pictures: deps.pictures } : {}),
       ...(deps.packdata ? { packdata: deps.packdata } : {}),
       ...(deps.design ? { design: deps.design } : {}),
+      ...(deps.planner ? { planner: deps.planner } : {}),
       ...(deps.routineLimits ? { routineLimits: deps.routineLimits } : {}),
       ...(deps.runLogs ? { runLogs: deps.runLogs } : {}),
       ...(deps.feedback ? { feedback: deps.feedback } : {}),
@@ -286,6 +289,7 @@ export class Lines {
       ...(deps.pictures ? { pictures: deps.pictures } : {}),
       ...(deps.packdata ? { packdata: deps.packdata } : {}),
       ...(deps.design ? { design: deps.design } : {}),
+      ...(deps.planner ? { planner: deps.planner } : {}),
       ...(deps.runLogs ? { runLogs: deps.runLogs } : {}),
       ...(deps.feedback ? { feedback: deps.feedback } : {}),
       ...(deps.methods ? { methods: deps.methods } : {}),

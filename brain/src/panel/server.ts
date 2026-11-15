@@ -24,6 +24,8 @@ import { listAdapters } from '../llm/index.ts'
 import type { ProviderConfig, RemoteModelsResult, TestConnectionResult } from '../llm/index.ts'
 import { StructureBook } from '../packdata/index.ts'
 import type { GuideBook, TextureAtlas, TooltipTable } from '../packdata/index.ts'
+import { PlannerStoreError } from '../planner/store.ts'
+import type { PlannerWorkspace, PlannerReadSection } from '../planner/workspace.ts'
 import { BlockLooks, GridError, gridFromBlocks, gridFromDraft, renderView, sceneOf } from '../render/index.ts'
 import type { BlockKind, Scene, VoxelGrid } from '../render/index.ts'
 import type { ActivityEntry, ActivityLog } from '../store/activity-log.ts'
@@ -68,6 +70,8 @@ export interface PanelDeps {
   manuals: ManualStore
   /** 它自己出设计用的：图纸草稿和主人传的图片。 */
   design: DesignWorkspace
+  /** Read-only access to offline production analyses; these routes cannot start a calculation or body task. */
+  planner?: PlannerWorkspace
   /** 意见簿：它自己记下的反馈。 */
   feedback: FeedbackStore
   /** 它看过的图（对话日志里显示），和画那张图用的盒子（三维预览用）。没提供时日志里就没有图。 */
@@ -329,6 +333,9 @@ export class PanelServer {
       }
       if (e instanceof HttpError) {
         this.json(res, e.status, { error: { code: e.code, message: e.message } })
+      } else if (e instanceof PlannerStoreError) {
+        const status = e.code === 'not_found' ? 404 : e.code === 'unavailable' ? 503 : e.code === 'too_large' ? 413 : e.code.startsWith('invalid_') ? 400 : 409
+        this.json(res, status, { error: { code: e.code, message: e.message } })
       } else if (e instanceof BridgeError) {
         const status = e.code === 'disconnected' || e.code === 'timeout' ? 503 : 502
         this.json(res, status, { error: { code: e.code, message: `游戏那边没办成：${e.message}（${e.code}）` } })
@@ -384,6 +391,11 @@ export class PanelServer {
     }
   }
 
+  private productionPlanner(): PlannerWorkspace {
+    if (!this.deps.planner) throw new HttpError(503, 'unavailable', '这台大脑没有接入产线计算模块')
+    return this.deps.planner
+  }
+
   private async handleApi(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
     const method = req.method ?? 'GET'
     const route = url.pathname.slice('/api'.length)
@@ -435,6 +447,15 @@ export class PanelServer {
     }
     if (route === '/textures/atlas.png' && method === 'GET') {
       this.textureAtlas(res)
+      return
+    }
+    if (route === '/production/export' && method === 'GET') {
+      const data = await this.productionPlanner().export(url.searchParams.get('id') ?? '')
+      const projectOnly = url.searchParams.get('format') === 'project'
+      const text = projectOnly ? JSON.stringify(data.record.project, null, 2) : data.json
+      const filename = projectOnly ? `${data.record.id}-project.json` : data.filename
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(text), 'Content-Disposition': `attachment; filename="${filename}"` })
+      res.end(text)
       return
     }
     if (route === '/feedback/export' && method === 'GET') {
@@ -582,6 +603,13 @@ export class PanelServer {
         return guideSearch(this.deps.guide, url.searchParams, panelReject)
       case 'GET /guide/page':
         return guidePage(this.deps.guide, url.searchParams, panelReject)
+      case 'GET /production':
+        return this.productionPlanner().list({ offset: Number(url.searchParams.get('offset') ?? 0), limit: Number(url.searchParams.get('limit') ?? 25) })
+      case 'GET /production/record':
+        return this.productionPlanner().read(url.searchParams.get('id') ?? '', {
+          section: (url.searchParams.get('section') ?? 'summary') as PlannerReadSection,
+          offset: Number(url.searchParams.get('offset') ?? 0), limit: Number(url.searchParams.get('limit') ?? 25),
+        })
       case 'GET /methods':
         return methodsList(this.deps.methods, this.deps.methodsEnv?.() ?? {})
       case 'PUT /methods':
