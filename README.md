@@ -60,7 +60,7 @@ GTNH（GT New Horizons，Minecraft 1.7.10）服务器里的 AI 玩家：一个�
 
 这些组件的 MIT 版权和许可均保留在 [`brain/vendor/gtnh-planner/`](brain/vendor/gtnh-planner/)，固定版本、来源、改动和构建哈希见 [`provenance.json`](brain/vendor/gtnh-planner/provenance.json)，其他许可说明见 [NOTICE](NOTICE)。我们补的是本地配方绑定、离线运行、资源限制、结果记录和工具接线，不另写一套替代原版的数学。
 
-结果会列出外部供料、强制补流/排流、未满足目标和机型假设。稳态平均耗电不等于整数设备满速时的供电容量；概率产出是期望量。机器结构、库存、管线和实际生产仍需另行查询与验收。用法见 [`production` 手册](brain/manuals/production.md)，设计与边界见 [设计文档](docs/PRODUCTION_PLANNER_DESIGN.md)。
+结果会列出外部供料、强制补流/排流、未满足目标和机型假设。稳态平均耗电不等于整数设备满速时的供电容量；概率产出是期望量。机器结构、库存、管线和实际生产仍需另行查询与验收。用法见 [`production` 手册](brain/manuals/production.md)，设计与边界见 [设计文档](docs/PRODUCTION_PLANNER_DESIGN.md)，验证范围见 [验收记录](docs/QA_PRODUCTION_PLANNER.md)。
 
 ## 目录
 
