@@ -427,7 +427,7 @@ export const placeBlocks: Tool = {
 export const depositItems: Tool = {
   name: 'deposit_items',
   description:
-    'Walk to a container (a chest or similar, Storage Drawers, a machine) and put items into it (task). Without "items": everything except tools, food and the ids in "keep". Fails with container_full if it does not fit. Give "container" or "bag".',
+    'Walk to a container (a chest or similar, Storage Drawers, a machine, an ME terminal) and put items into it (task). Without "items": everything except tools, food and the ids in "keep". Fails with container_full if it does not fit. Give "container" or "bag".',
   inputSchema: obj({
     container: containerAt,
     bag,
@@ -447,7 +447,7 @@ export const depositItems: Tool = {
 export const withdrawItems: Tool = {
   name: 'withdraw_items',
   description:
-    'Walk to a container (a chest or similar, Storage Drawers, a machine) and take items out (task); counts are exact. It ends as done even when there was not enough: "missing" in the result says what. Give "container" or "bag".',
+    'Walk to a container (a chest or similar, Storage Drawers, a machine, an ME terminal) and take items out (task); counts are exact. It ends as done even when there was not enough: "missing" in the result says what. Give "container" or "bag".',
   inputSchema: obj(
     {
       container: containerAt,

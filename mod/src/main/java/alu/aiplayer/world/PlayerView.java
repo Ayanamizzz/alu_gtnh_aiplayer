@@ -79,7 +79,8 @@ public final class PlayerView {
         final List<Object[]> seen = new ArrayList<>();
         for (TileEntity te : WorldQueries
             .tileEntities(w, ex - AHEAD_RANGE, ez - AHEAD_RANGE, ex + AHEAD_RANGE, ez + AHEAD_RANGE)) {
-            if (!(te instanceof IInventory) || Math.abs(te.yCoord - ey) > AHEAD_RANGE) continue;
+            if (Math.abs(te.yCoord - ey) > AHEAD_RANGE) continue;
+            if (!(te instanceof IInventory) && !alu.aiplayer.act.MeNetworks.isTerminalHost(te)) continue;
             double dx = te.xCoord + 0.5 - eye.xCoord, dy = te.yCoord + 0.5 - eye.yCoord, dz = te.zCoord + 0.5 - eye.zCoord;
             double dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
             if (dist > AHEAD_RANGE || dist < 0.01) continue;
@@ -114,6 +115,7 @@ public final class PlayerView {
         if (Drawers.isController(te)) o.addProperty("kind", "drawer_controller");
         else if (Drawers.is(te)) o.addProperty("kind", "drawers");
         else if (machine != null) o.addProperty("kind", "machine");
+        else if (alu.aiplayer.act.MeNetworks.isTerminalHost(te)) o.addProperty("kind", "me_terminal");
         else if (te instanceof IInventory) o.addProperty("kind", "container");
         return o;
     }

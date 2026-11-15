@@ -271,6 +271,9 @@ describe('模型拿到的工具清单', () => {
   // dfece7e的能力说明澄清后work为59,151。第三批通用缺口：施工/移动/拾物共享dig/climb/maxDrop及use.approach +2,924，
   // open_screen原生物品点击上下文说明净-22；合并后work 62,053（+2,902），talk仍29,519。没有新增模型常驻工具。
   // 这些参数是每次动作的选择，不能只写进手册或由身体替模型决定；槽位/资料/单位事实放在结果，不扩常驻schema。
+  // ME 终端（AE2）：list_containers 的说明里多了 [ME terminal] 和 ME network 的数量是真实的（两条线各 +40），
+  // deposit_items / withdraw_items 的说明各多 “, an ME terminal”（干活线 +32）。work 62,125，talk 29,559，上限没动。
+  // 没有新增工具：终端照容器走现有的查看和存取，怎么用写在 containers 手册里。
   for (const [line, ceiling] of [['work', 62_200], ['talk', 29_600]] as const) {
     it(`防回涨：${line === 'work' ? '干活线' : '对话线'}（不能看图的模型）每一轮收到的工具清单不超过 ${ceiling.toLocaleString('en-US')} 字符`, () => {
       const sizes = modelToolSpecs(LINE_TOOLS[line], { canSee: false, line })

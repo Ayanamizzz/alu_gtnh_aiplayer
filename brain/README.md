@@ -343,6 +343,8 @@ test/              node:test；模拟 bridge（mock-bridge.ts）和模拟模型�
 
 **看周围的工具可以换中心。** `look_around`、`find_blocks`、`list_containers`、`list_stock`、`find_in_storage`、`find_machines` 默认以它自己为中心；给 `at`（一个坐标）就以那个地方为中心看（`tools/where.ts`）。主人说的是某个地方的东西时该这么用：实测它站在五十格外、以自己为中心查了一圈没找到目标箱子，就停下来问主人要坐标了。所以以自己为中心什么都没找到时，结果里会提醒一句“可以给 at 看别处”。`view_area`、`scan_area` 本来就是给范围的，`list_drawers` 给的是抽屉管理器的坐标（`list_stock`、`list_drawers` 是库函数）。
 
+**ME 网络（AE2）当一个容器。** 身体把电缆上的 ME 终端照容器列出来（`kind: "me_terminal"`），内容是它那个网络里存着的物品和真实数量，所以 `list_containers`、`list_stock`、`find_in_storage` 不用另一套工具就看得到网络，`withdraw_items` / `deposit_items` 的 `container` 给终端所在的电缆就是经终端存取（`tools/storage.ts`、`tools/format.ts`）。同一个网络的几个终端只有一个带着内容，其余指到它；看得比身体一次看得了的远、切成几块各查一次时，大脑再按 `network` 合一遍（`oneListPerNetwork`，`find_in_storage` 里按 `network` 去重），一个网络不会被算两遍。黑着的终端（没电、没频道）写明看不到里面，不算进合计。怎么用写在 `containers` 手册的“ME 网络”一节；做了什么、实测到哪见 `docs/QA_AE2_TERMINAL.md`。
+
 ### 机器：身体读得懂的，和照配方册认的
 
 身体用任何带界面的方块都是同一套办法（走过去、打开界面、把东西点进去点出来），不分是哪个 mod 的。大脑这边因此不再有“只支持 GregTech 机器”的名单，只分两层（`tools/recipe-book.ts`）：

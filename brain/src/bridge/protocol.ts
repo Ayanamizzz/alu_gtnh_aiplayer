@@ -325,9 +325,20 @@ export interface ContainerInfo {
   /**
    * 没有：普通容器。"drawers"：抽屉（Storage Drawers），items 的 count 是抽屉里真实的数量，slots 是抽屉格数。
    * "drawer_controller"：抽屉管理器，自己不装东西，drawers 是它管着几个抽屉方块。"machine"：GregTech 机器。
+   * "me_terminal"：ME 网络（Applied Energistics）的一个终端，items 是它那个网络里存着的东西（真实数量），没有 slots。
    */
-  kind?: 'drawers' | 'drawer_controller' | 'machine' | (string & {})
+  kind?: 'drawers' | 'drawer_controller' | 'machine' | 'me_terminal' | (string & {})
   drawers?: number
+  /** ME 终端：它在这个方块的哪个面上（down/up/north/south/west/east）。 */
+  side?: string
+  /** ME 终端：false 是黑的（没电、没频道），这时 items 是空的，不代表网络里没东西。 */
+  online?: boolean
+  /** ME 终端：它属于哪个网络。同一个网络的每个终端这一项相同。 */
+  network?: string
+  /** ME 终端：同一个网络里的东西已经列在这个位置的终端上了，这里的 items 是空的（免得算两遍）。 */
+  sameNetworkAs?: BlockPos
+  /** ME 终端：网络里一共存着多少种东西。 */
+  kinds?: number
   /** 有这一项的容器多半是自动化的一环：往里放的东西可能马上被抽走。 */
   attached?: AttachedBlock[]
   /** 抽屉：管着它的抽屉管理器。 */
@@ -392,7 +403,7 @@ export interface SeenBlock {
   id?: string
   meta?: number
   name?: string
-  /** container、drawers、drawer_controller、machine；都不是就不带。 */
+  /** container、drawers、drawer_controller、machine、me_terminal；都不是就不带。 */
   kind?: string
   dist?: number
   attached?: AttachedBlock[]
@@ -643,10 +654,14 @@ export interface StockPlace {
   z: number
   /** 容器的显示名。 */
   container?: string
-  /** "cover"：东西在这个方块某个面的覆盖板里（cover 是覆盖板的名字，side 是哪个面），不在它自己的格子里。 */
-  kind?: 'drawers' | 'cover' | (string & {})
+  /**
+   * "cover"：东西在这个方块某个面的覆盖板里（cover 是覆盖板的名字，side 是哪个面），不在它自己的格子里。
+   * "me_terminal"：东西在 ME 网络里，从这个位置的终端取（side 是终端在哪个面，network 是哪个网络）。
+   */
+  kind?: 'drawers' | 'cover' | 'me_terminal' | (string & {})
   cover?: string
   side?: string
+  network?: string
   count: number
   /** 按矿辞名或不带 meta 查时：这一处具体是哪几种（可以直接拿去 withdraw）。 */
   items?: Item[]

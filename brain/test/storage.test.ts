@@ -509,3 +509,79 @@ describe('通用的界面动作：打开、看格子、点、关', () => {
     for (const name of ['open_screen', 'click_slot', 'close_screen']) assert.deepEqual([ROUTINE_BLOCKED_TOOLS.includes(name), QUERY_TOOLS.includes(name)], [false, false], name)
   })
 })
+
+describe('ME 终端（Applied Energistics）：当一个装着整个网络的容器', () => {
+  const BUS = 'appliedenergistics2:tile.BlockCableBus'
+  const NET = '0:10,64,0'
+  /** 一个终端：身体把它那个网络里存着的东西列在 items 里（真实数量），没有 slots。 */
+  const terminal = (x: number, extra: Partial<ContainerInfo> = {}): ContainerInfo => ({ x, y: 64, z: -4, id: BUS, name: 'ME Terminal', kind: 'me_terminal', side: 'south', online: true, network: NET, items: [], ...extra })
+  const STORED = [{ ...COAL, count: 70000 }, { ...STEEL, count: 12 }]
+
+  it('list_containers：终端写明在哪个面、列的是网络里的东西；同一个网络的另一个终端指到它，不说“空的”；黑着的终端写明看不到', async (t) => {
+    const s = setup(t)
+    s.game.handlers['world.containers'] = body([
+      terminal(12, { kinds: 2, items: STORED }),
+      terminal(14, { sameNetworkAs: { x: 12, y: 64, z: -4 } }),
+      terminal(16, { online: false, network: undefined }),
+    ])
+    const res = await s.run('list_containers', {})
+    assert.deepEqual(res.content.split('\n'), [
+      'Within 16 blocks of you: 3 container(s).',
+      `- (12,64,-4) ME Terminal [${BUS}] [ME terminal on the south face] (what its ME network stores, 2 kind(s); real counts): 70000× minecraft:coal "Coal", 12× gregtech:gt.metaitem.01/11305 "Steel Ingot"`,
+      `- (14,64,-4) ME Terminal [${BUS}] [ME terminal on the south face]: the same ME network as the terminal at (12,64,-4); its contents are listed there`,
+      `- (16,64,-4) ME Terminal [${BUS}] [ME terminal on the south face]: dark (its network has no power or no channel for it): nothing can be seen or taken through it`,
+    ])
+  })
+
+  it('list_stock：一个网络只算一遍，写明是 ME 网络、从终端取；黑着的终端说明不在合计里', async (t) => {
+    const s = setup(t)
+    s.game.handlers['world.containers'] = body([
+      chest(11, [{ ...COAL, count: 2 }], { z: -4 }),
+      terminal(12, { kinds: 2, items: STORED }),
+      terminal(14, { sameNetworkAs: { x: 12, y: 64, z: -4 } }),
+      terminal(16, { online: false, network: undefined }),
+    ])
+    const res = await s.run('list_stock', {})
+    assert.deepEqual(res.content.split('\n'), [
+      'Looked into 1 chest(s) and drawer(s) and 1 ME network(s) (through a terminal) within 16 blocks of you: 2 kind(s) of item. A place marked "ME network" is a terminal: withdraw_items with its position takes the item out of the network. 1 ME terminal(s) are dark (no power or no channel): what their network stores cannot be seen and is not in these totals. 2 item(s), most first:',
+      '- 70002× Coal [minecraft:coal]: (12,64,-4) ME network 70000, (11,64,-4) 2',
+      '- 12× Steel Ingot [gregtech:gt.metaitem.01/11305]: (12,64,-4) ME network 12',
+    ])
+  })
+
+  it('看得比身体一次看得了的远、切成几块查时：两块里各有同一个网络的一个终端，各自都带着东西，合起来还是只算一遍', async (t) => {
+    const s = setup(t)
+    // 身体每一块各查一次，每一块里最近的那个终端带着整个网络的东西
+    s.game.handlers['world.containers'] = body([terminal(12, { kinds: 2, items: STORED }), terminal(90, { kinds: 2, items: STORED })])
+    const stock = await s.run('list_stock', { radius: 100 })
+    assert.match(stock.content, /and 1 ME network\(s\) \(through a terminal\)/)
+    assert.match(stock.content, /\n- 70000× Coal \[minecraft:coal\]: \(12,64,-4\) ME network 70000\n- 12× Steel Ingot /)
+    const list = await s.run('list_containers', { radius: 100 })
+    assert.match(list.content, /\n- \(90,64,-4\) ME Terminal .*: the same ME network as the terminal at \(12,64,-4\); its contents are listed there$/)
+  })
+
+  it('find_in_storage：东西在 ME 网络里时写明从哪个终端取；切成几块查时同一个网络不算两遍', async (t) => {
+    const s = setup(t)
+    // 每一块都看到了这个网络的一个终端（位置各不相同），都报了整个网络的数
+    s.game.handlers['world.stock'] = (p) => ({
+      items: [{ id: 'minecraft:coal', meta: 0, total: 70000, places: [{ x: Number(p.x ?? 10), y: 64, z: Number(p.z ?? -4), container: 'ME Terminal', kind: 'me_terminal', side: 'south', network: NET, count: 70000 }] }],
+      containersLookedInto: 1,
+    })
+    const near = await s.run('find_in_storage', { items: [{ id: 'minecraft:coal', meta: 0 }], radius: 32 })
+    assert.match(near.content, /\n- minecraft:coal[^\n]*: 70000 in total\n/)
+    assert.match(near.content, /ME Terminal \[ME network, through this terminal\]: 70000/)
+    const wide = await s.run('find_in_storage', { items: [{ id: 'minecraft:coal', meta: 0 }], radius: 100 })
+    assert.ok(s.game.callsOf('world.stock').length > 2, '切成了几块')
+    assert.match(wide.content, /: 70000 in total/)
+    assert.equal((wide.data as { items: { total: number; places: unknown[] }[] }).items[0]!.total, 70000)
+    assert.equal((wide.data as { items: { total: number; places: unknown[] }[] }).items[0]!.places.length, 1)
+  })
+
+  it('种数比身体一次给得了的还多的网络：说明只列到这里，不说“身体太旧”', async (t) => {
+    const s = setup(t)
+    s.game.handlers['world.containers'] = body([terminal(12, { kinds: 2300, items: STORED, moreKinds: 2298 })])
+    const res = await s.run('list_stock', {})
+    assert.match(res.content, /An ME network holding more than 2000 kinds is counted only as far as that: find_in_storage still finds any particular item in it\./)
+    assert.doesNotMatch(res.content, /too old/)
+  })
+})

@@ -499,7 +499,9 @@ export function formatServerInfo(info: ServerInfo, botName: string, botDim: numb
 export function formatContainer(c: ContainerInfo, itemLimit: number): string {
   // 抽屉（Storage Drawers）标出来：它的“格”是抽屉格，数量是真实库存，一格可以上万
   const drawers = c.kind === 'drawers' || c.kind === 'drawer_controller'
-  const kind = c.kind === 'drawers' ? ' [drawers]' : c.kind === 'drawer_controller' ? ' [drawer controller]' : c.kind ? ` [${c.kind}]` : ''
+  // ME 终端（Applied Energistics）：电缆某个面上的一个部件，列的是它那个网络里存着的东西，没有格子
+  const terminal = c.kind === 'me_terminal'
+  const kind = c.kind === 'drawers' ? ' [drawers]' : c.kind === 'drawer_controller' ? ' [drawer controller]' : terminal ? ` [ME terminal${c.side ? ` on the ${c.side} face` : ''}]` : c.kind ? ` [${c.kind}]` : ''
   // GregTech 的机器：原料格、产物格分开数（整个物品栏的大小还算上了玩家不放东西的格子，说明不了能放几样料）
   const ms = c.machineSlots
   const machineSlotText =
@@ -516,6 +518,7 @@ export function formatContainer(c: ContainerInfo, itemLimit: number): string {
   // 抽屉管理器自己不装东西：它管的东西用 list_drawers 看
   if (c.kind === 'drawer_controller') notes.push(`manages ${c.drawers ?? '?'} drawer block(s); the library function list_drawers lists what they hold, given this position`)
   if (c.controller) notes.push(`managed by the drawer controller at ${formatPos(c.controller)}`)
+  if (terminal && c.online !== false && !c.sameNetworkAs) notes.push(`what its ME network stores${typeof c.kinds === 'number' ? `, ${c.kinds} kind(s)` : ''}; real counts`)
   if (ms !== undefined && typeof ms.circuit === 'number') notes.push(ms.circuit > 0 ? `programmed circuit ${ms.circuit} set (a setting of its own, not in a slot)` : 'no programmed circuit set')
   const auto = attachedText(c.attached)
   if (auto) notes.push(auto)
@@ -526,6 +529,9 @@ export function formatContainer(c: ContainerInfo, itemLimit: number): string {
   // 各个面上的覆盖板各占一行：能装东西的写出装着什么（这些东西不在它自己的格子里）
   const covers = (c.covers ?? []).map((cover) => `\n  ${coverText(cover, Math.min(itemLimit, 12))}`).join('')
   if (c.kind === 'drawer_controller') return `${head}${note}${covers}`
+  // 黑着的终端什么都看不到；同一个网络的另一个终端已经把东西列出来了的，这里不再列（不是空的）
+  if (terminal && c.online === false) return `${head}${note}: dark (its network has no power or no channel for it): nothing can be seen or taken through it`
+  if (terminal && c.sameNetworkAs) return `${head}${note}: the same ME network as the terminal at ${formatPos(c.sameNetworkAs)}; its contents are listed there`
   // 没列出来的种数算在一起：这里只列前 itemLimit 种的，加上身体自己没给的（moreKinds）。怎么看全由调用的工具在结果里说
   const merged = mergeItems(c.items ?? [])
   const hidden = Math.max(0, merged.length - itemLimit) + count(c.moreKinds)
@@ -533,7 +539,7 @@ export function formatContainer(c: ContainerInfo, itemLimit: number): string {
   return `${head}${note}: ${merged.length === 0 && hidden === 0 ? 'empty' : `${listed}${hidden > 0 ? `${listed ? ', ' : ''}… and ${hidden} more kinds` : ''}`}${covers}`
 }
 
-const SEEN_KINDS: Record<string, string> = { container: 'container', drawers: 'drawers', drawer_controller: 'drawer controller', machine: 'machine' }
+const SEEN_KINDS: Record<string, string> = { container: 'container', drawers: 'drawers', drawer_controller: 'drawer controller', machine: 'machine', me_terminal: 'ME terminal' }
 
 /** 一个玩家站在哪、朝哪看、准星指着什么、面前有哪些容器（world.player）。给模型看的英文。 */
 export function formatPlayerView(name: string, view: PlayerView): string {
@@ -1330,7 +1336,9 @@ export function formatStock(res: StockResult, radius: number, from: { of: string
         lines.push(`  - ${formatPos(p)} ${nameOf({ name: p.container }) ?? 'block'}, in the cover "${nameOf({ name: p.cover }) ?? 'cover'}" on its ${side} face: ${p.count}${exact ? ` (${exact})` : ''} — container {x: ${p.x}, y: ${p.y}, z: ${p.z}, side: "${side}", sneak: true}`)
         continue
       }
-      lines.push(`  - ${formatPos(p)} ${nameOf({ name: p.container }) ?? 'container'}${p.kind ? ` [${p.kind}]` : ''}: ${p.count}${exact ? ` (${exact})` : ''}`)
+      // 在 ME 网络里：从那个终端取，container 就是终端的位置
+      const kind = p.kind === 'me_terminal' ? ' [ME network, through this terminal]' : p.kind ? ` [${p.kind}]` : ''
+      lines.push(`  - ${formatPos(p)} ${nameOf({ name: p.container }) ?? 'container'}${kind}: ${p.count}${exact ? ` (${exact})` : ''}`)
     }
     if (count(it.morePlaces) > 0) lines.push(`  - … and ${it.morePlaces} more place(s) holding less`)
   }

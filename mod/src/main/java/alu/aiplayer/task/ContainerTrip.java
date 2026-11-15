@@ -99,6 +99,13 @@ final class ContainerTrip {
                     arrived = false;
                     return Status.WORKING;
                 }
+                // So is a terminal on a cable: it is clicked on the face it is on.
+                int terminal = alu.aiplayer.act.MeNetworks.terminalSide(te, bot.player());
+                if (terminal >= 2 && !Drawers.inFront(bot.player(), x, y, z, terminal)) {
+                    nav.go(Goal.reachFacing(x, y, z, terminal), travelRule, false);
+                    arrived = false;
+                    return Status.WORKING;
+                }
             }
         }
         if (beforeSession != null) {
