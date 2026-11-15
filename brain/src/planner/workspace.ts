@@ -5,6 +5,8 @@ import type { PlannerEngine } from './engine.ts'
 import { NATIVE_PROJECT_EXAMPLE } from './model.ts'
 import type { DescribeOptions, ReportSummary } from './model.ts'
 import { summarizeReport } from './report.ts'
+import { NATIVE_REFERENCES, readPlannerReference } from './reference.ts'
+import type { NativeReference } from './reference.ts'
 import { copyPlannerJson, plannerPage, PlannerStore, PlannerStoreError, recordSummary } from './store.ts'
 import type { PlannerPage, PlannerRecord, PlannerRecordInput } from './store.ts'
 
@@ -167,6 +169,10 @@ export class PlannerWorkspace {
     this.now = options.now ?? Date.now
   }
 
+  reference(name?: NativeReference, options?: { query?: string; offset?: number; limit?: number }) {
+    return readPlannerReference(name, options)
+  }
+
   /** No refs: native capabilities and a self-contained example; no client or imported file required. */
   describe(refs: number[] = [], options: DescribeOptions = {}) {
     if (!Array.isArray(refs) || refs.length > 50 || refs.some((ref) => !Number.isSafeInteger(ref) || ref < 0)) {
@@ -175,7 +181,8 @@ export class PlannerWorkspace {
     if (refs.length && !this.packdata?.recipes) throw new PlannerStoreError('unavailable', 'Local recipe data is not loaded. Native declared FactoryProjects can still be solved; no local recipe binding is claimed.')
     const described = refs.length ? describeRecipes(this.packdata!, refs, options) : undefined
     return {
-      actions: ['describe', 'solve', 'read', 'list', 'export'],
+      actions: ['describe', 'reference', 'solve', 'read', 'list', 'export'],
+      references: NATIVE_REFERENCES,
       format: 'Native English FactoryProject (schemaVersion 1)',
       units: { items: 'item/s', fluids: 'mB/s (1 GT L = 1 mB)', power: 'EU/t; 20 ticks/s' },
       staticAnalysis: true,
