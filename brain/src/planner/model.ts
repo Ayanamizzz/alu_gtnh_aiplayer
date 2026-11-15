@@ -1318,8 +1318,8 @@ export const NATIVE_PROJECT_EXAMPLE: FactoryProject = {
   ],
   edges: [
     { id: 'feed', source: 'source', target: 'machine', resourceKind: 'item', resourceId: 'example:feed@0',
-      sourceHandle: 'output:item:example:feed@0', targetHandle: 'input:item:example:feed@0' },
+      sourceHandle: 'output:item:example%3Afeed%400', targetHandle: 'input:item:example%3Afeed%400' },
     { id: 'product', source: 'machine', target: 'product', resourceKind: 'item', resourceId: 'example:product@0',
-      sourceHandle: 'output:item:example:product@0', targetHandle: 'input:item:example:product@0' },
+      sourceHandle: 'output:item:example%3Aproduct%400', targetHandle: 'input:item:example%3Aproduct%400' },
   ], fuelProfiles: [],
 };
