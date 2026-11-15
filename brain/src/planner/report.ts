@@ -6,7 +6,7 @@ import { getStorageRoles, storageTargetMode, hasStorageTarget, getNodePowerRepor
 const EPS = 1e-7
 function meets(rule: string, actual: number | undefined, target: number): boolean {
   if (actual === undefined || !Number.isFinite(actual)) return false
-  const tolerance = EPS * Math.max(1, Math.abs(target))
+  const tolerance = EPS * Math.max(1e-9, Math.abs(target), Math.abs(actual))
   return rule === 'at-most' ? actual <= target + tolerance : rule === 'exact' ? Math.abs(actual - target) <= tolerance : actual + tolerance >= target
 }
 
@@ -39,20 +39,20 @@ export function summarizeReport(project: FactoryProject, nativeReport: unknown, 
   summary.totalEuT = report.totalEuT
   summary.forcedFlows = [...plan?.forced ?? []]
   summary.shortfalls = [...plan?.shortfalls ?? []]
-  for (const forced of plan?.forced ?? []) if (forced.side === 'in' && forced.perSecond > EPS) summary.issues.push({
+  for (const forced of plan?.forced ?? []) if (forced.side === 'in' && forced.perSecond > 0) summary.issues.push({
     severity: 'warning', code: 'FORCED_IMPORT', nodeId: forced.nodeId,
     message: `The native solve adds ${forced.perSecond}/s of ${forced.resourceKey} at ${forced.portKey}. Targets may be met only with this extra supply, beyond the drawn supply chain; a satisfied source cap does not close this gap.`,
   })
   summary.externalInputs = [
     ...(report.externalInputs ?? []).map(row => ({ source: 'native-externalInputs', ...row })),
-    ...Object.values(report.resources).filter(row => row.importedPerSecond > EPS && !(report.externalInputs ?? []).some(input => input.key === row.key)).map(row => ({ source: 'native-imported-balance', ...row })),
-    ...(plan?.forced ?? []).filter(row => row.side === 'in' && row.perSecond > EPS).map(row => ({ source: 'forced', ...row })),
-    ...(plan?.terminals ?? []).filter(row => row.side === 'in' && row.perSecond > EPS).map(row => ({ source: 'terminal', ...row })),
+    ...Object.values(report.resources).filter(row => row.importedPerSecond > 0 && !(report.externalInputs ?? []).some(input => input.key === row.key)).map(row => ({ source: 'native-imported-balance', ...row })),
+    ...(plan?.forced ?? []).filter(row => row.side === 'in' && row.perSecond > 0).map(row => ({ source: 'forced', ...row })),
+    ...(plan?.terminals ?? []).filter(row => row.side === 'in' && row.perSecond > 0).map(row => ({ source: 'terminal', ...row })),
   ]
   summary.externalOutputs = [
     ...(report.unconsumedOutputs ?? []).map(row => ({ source: 'native-unconsumedOutputs', ...row })),
-    ...(plan?.forced ?? []).filter(row => row.side === 'out' && row.perSecond > EPS).map(row => ({ source: 'forced', ...row })),
-    ...(plan?.terminals ?? []).filter(row => row.side === 'out' && row.perSecond > EPS).map(row => ({ source: 'terminal', ...row })),
+    ...(plan?.forced ?? []).filter(row => row.side === 'out' && row.perSecond > 0).map(row => ({ source: 'forced', ...row })),
+    ...(plan?.terminals ?? []).filter(row => row.side === 'out' && row.perSecond > 0).map(row => ({ source: 'terminal', ...row })),
     ...(plan?.spills ?? []).map(row => ({ source: 'buffer-spill', ...row })),
   ]
   summary.assumptions.push('Boundary lists preserve native resource balances and port-level detail as separate views of the same flows; do not sum both views together.')
@@ -65,8 +65,8 @@ export function summarizeReport(project: FactoryProject, nativeReport: unknown, 
     const reading = report.storages[storage.id]
     const actual = reading ? source ? reading.consumedPerSecond : reading.producedPerSecond : undefined
     const rule = storageTargetMode(storage, role)
-    if (source && actual !== undefined && actual > EPS) summary.externalInputs.push({ source: 'source-storage', storageId: storage.id, resourceKey: `${storage.kind}:${storage.resourceId}`, perSecond: actual, rule, ...(rate !== undefined ? { limit: Math.abs(rate) } : {}) })
-    if (!source && !buffer && actual !== undefined && actual > EPS) summary.externalOutputs.push({ source: 'drain-storage', storageId: storage.id, resourceKey: `${storage.kind}:${storage.resourceId}`, perSecond: actual, drainMode: storage.drainMode ?? 'product' })
+    if (source && actual !== undefined && actual > 0) summary.externalInputs.push({ source: 'source-storage', storageId: storage.id, resourceKey: `${storage.kind}:${storage.resourceId}`, perSecond: actual, rule, ...(rate !== undefined ? { limit: Math.abs(rate) } : {}) })
+    if (!source && !buffer && actual !== undefined && actual > 0) summary.externalOutputs.push({ source: 'drain-storage', storageId: storage.id, resourceKey: `${storage.kind}:${storage.resourceId}`, perSecond: actual, drainMode: storage.drainMode ?? 'product' })
     if (!planning || role !== 'source' && role !== 'product' || !hasStorageTarget(storage, role) || rate === undefined) continue
     const goal: GoalAssessment = { ownerId: storage.id, rule, target: Math.abs(rate), actual, resourceKey: `${storage.kind}:${storage.resourceId}`,
       met: !unmet.has(storage.id) && !reading?.targetUnreachable && meets(rule, actual, Math.abs(rate)) }
@@ -77,7 +77,7 @@ export function summarizeReport(project: FactoryProject, nativeReport: unknown, 
     const readings = sectionIds.flatMap(id => report.nodes[id] ? [report.nodes[id]] : [])
     const fractionalMachines = readings.reduce((sum, row) => sum + Math.max(0, row.theoreticalMachinesRequired), 0)
     const capacity = planning ? node.solvePin : node.machineCount
-    const buildMachines = Math.ceil(Math.max(0, fractionalMachines - EPS))
+    const buildMachines = fractionalMachines > 0 ? Math.max(1, Math.ceil(fractionalMachines - EPS)) : 0
     // Plan/Solve rewrite flow/EU fields at solved scale and use utilization 1 for running
     // rows. Build leaves them at nameplate: multiply by utilization exactly once in either mode.
     const averageEuT = readings.reduce((sum, row) => sum + row.euT * Math.max(0, row.utilization), 0)
@@ -100,7 +100,7 @@ export function summarizeReport(project: FactoryProject, nativeReport: unknown, 
     }
     summary.averageEuT += averageEuT; summary.buildPeakEuT += energy.buildPeakEuT
     summary.averageSteamMbPerSecond += energy.averageSteamMbPerSecond; summary.buildPeakSteamMbPerSecond += energy.buildPeakSteamMbPerSecond
-    if (energy.averageSteamMbPerSecond > EPS) summary.externalInputs.push({ source: 'machine-steam', nodeId: node.id, resourceKey: 'fluid:steam', perSecond: energy.averageSteamMbPerSecond, note: 'Native steam operating requirement, separate from recipe wires; provide steam supply.' })
+    if (energy.averageSteamMbPerSecond > 0) summary.externalInputs.push({ source: 'machine-steam', nodeId: node.id, resourceKey: 'fluid:steam', perSecond: energy.averageSteamMbPerSecond, note: 'Native steam operating requirement, separate from recipe wires; provide steam supply.' })
     summary.machines.push({ nodeId: node.id, sections: sectionIds, fractionalMachines, buildMachines, shared: sectionIds.length > 1,
       ...(capacity !== undefined ? { capacity } : {}), capacityExceeded: capacity !== undefined && fractionalMachines > capacity + EPS * Math.max(1, capacity),
       euT: averageEuT, energy,

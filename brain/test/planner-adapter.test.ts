@@ -362,6 +362,20 @@ test('native hidden prefixes and section ids cannot hide supplies or collide wit
   assert(prepareProject(undefined, p).issues.some(i => i.code === 'INVALID_NODE'))
 })
 
+test('small positive native loads and imports are not rounded away as zero machines or satisfied zero output', () => {
+  const p = structuredClone(NATIVE_PROJECT_EXAMPLE)
+  p.storages![1].targetPerSecond = 1e-8
+  const nativeReport = {
+    nodes: { machine: { nodeId: 'machine', recipeId: 'example-recipe', enabled: true, inputs: {}, outputs: {}, euT: 2, utilization: 0, theoreticalMachinesRequired: 1e-8, status: 'underutilized', warnings: [] } },
+    storages: { product: { producedPerSecond: 0, consumedPerSecond: 0 } }, resources: {}, edges: {}, totalEuT: 0,
+    plan: { forced: [{ nodeId: 'machine', portKey: 'machine|i|input:item:feed', resourceKey: 'item:feed', side: 'in', perSecond: 1e-10 }], terminals: [], unanchored: [], notes: [], unmetDrawers: [] },
+  }
+  const summary = summarizeReport(p, nativeReport)
+  assert.equal(summary.machines[0].buildMachines, 1)
+  assert.equal(summary.goals.find(g => g.ownerId === 'product')?.met, false)
+  assert(summary.externalInputs.some(row => (row as { perSecond?: number }).perSecond === 1e-10))
+})
+
 test('native trash drawers stay visible as disposal requirements even when they disappear from surplus totals', async () => {
   const engine = new PlannerEngine()
   try {
