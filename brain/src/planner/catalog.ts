@@ -97,6 +97,18 @@ export function machineOptionsFor(local: LocalRecipe, recipe: Recipe): MachineOp
   })
 }
 
+/** Resolve physical settings exactly as each native recipe section does; no max-tier or common-default guessing. */
+export function resolvedMachineSettings(recipe: Recipe, node: FactoryNode): {
+  runTier: string; coilTier: string | undefined; machineConfigTiers: Record<string, string>
+} {
+  const effective = native.applyMachineHandlerToRecipe(recipe, node)
+  return {
+    runTier: native.getNodeRunTier(effective, node),
+    coilTier: native.getRecipeCoilTierControl(effective, node)?.current.key,
+    machineConfigTiers: Object.fromEntries(native.getRecipeMachineConfigTierControls(effective, node).map(control => [control.id, control.current.key])),
+  }
+}
+
 export function validateMachineSettings(recipe: Recipe, node: FactoryNode): PlannerIssue[] {
   const issues: PlannerIssue[] = []
   const add = (code: string, message: string) => issues.push({ severity: 'error' as const, code, message, recipeId: recipe.id, nodeId: node.id })

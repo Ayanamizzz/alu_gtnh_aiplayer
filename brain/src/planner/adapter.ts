@@ -6,7 +6,7 @@ import { ANY_META, CIRCUIT_ID } from '../packdata/recipes.ts'
 import type { Recipe as LocalRecipe, RecipeSlot } from '../packdata/recipes.ts'
 import { isRecord } from '../util.ts'
 import { resourceMatchesInput, canonicalizeResourceHandleId, getRecipeMachineHandlers } from '../../vendor/gtnh-planner/dist/catalog.mjs'
-import { CATALOG_VERSION, machineOptionsFor, recipeMapFor, validateMachineSettings } from './catalog.ts'
+import { CATALOG_VERSION, machineOptionsFor, recipeMapFor, resolvedMachineSettings, validateMachineSettings } from './catalog.ts'
 import type {
   DescribeOptions, DescribeResult, DescribedRecipe, FactoryProject, FactoryNode, LocalRecipeBinding,
   PlannerIssue, PrepareOptions, PreparedProject, Recipe, RecipeInput, RecipePort, RecipeProvenance, ResourceAmount,
@@ -274,7 +274,16 @@ export function prepareProject(packdata: PackData | undefined, value: unknown, o
     const recipe = recipes.get(node.recipeId)
     if (!recipe) { error('MISSING_RECIPE', `Node ${node.id} references missing recipe ${node.recipeId}.`); continue }
     const primaryHandlers = getRecipeMachineHandlers(recipe)
-    const sharedHandler = primaryHandlers.find(h => h.id === node.machineHandlerId) ?? primaryHandlers[0]
+    const sharedHandler = node.machineHandlerId === undefined ? primaryHandlers[0] : primaryHandlers.find(h => h.id === node.machineHandlerId)
+    if (node.machineHandlerId !== undefined && !sharedHandler) {
+      error('UNKNOWN_MACHINE_HANDLER', `Node ${node.id}: explicit machineHandlerId ${node.machineHandlerId} is not available for its primary recipe; it will not be replaced with a default.`)
+      continue
+    }
+    let primarySettings: ReturnType<typeof resolvedMachineSettings> | undefined
+    if (node.extraRecipes?.length) {
+      try { primarySettings = resolvedMachineSettings(recipe, node) }
+      catch { error('INVALID_MACHINE_SETTINGS', `Node ${node.id}: native machine settings could not be resolved for its primary recipe.`) }
+    }
     for (const [section, recipeId] of [node.recipeId, ...(node.extraRecipes ?? []).map(s => s.recipeId)].entries()) {
       const r = recipes.get(recipeId)
       if (!r) { error('MISSING_RECIPE', `Node ${node.id} section ${section} references missing recipe ${recipeId}.`); continue }
@@ -283,7 +292,14 @@ export function prepareProject(packdata: PackData | undefined, value: unknown, o
         if (!handlers.some(h => h.id === sharedHandler.id)) error('SHARED_MACHINE_MISMATCH', `Node ${node.id}: section ${section} cannot run on the primary section's ${sharedHandler.id} machine.`)
         else if (!node.machineHandlerId && handlers[0]?.id !== sharedHandler.id) error('AMBIGUOUS_SHARED_MACHINE', `Node ${node.id}: sections have different native default machines. Set machineHandlerId explicitly to a handler shared by every section before sharing its capacity.`)
       }
-      if (bindingOf(r)) issues.push(...validateMachineSettings(r, { ...node, machineHandlerId: sharedHandler?.id ?? node.machineHandlerId }))
+      if (section > 0 && primarySettings) {
+        try {
+          const settings = resolvedMachineSettings(r, node)
+          const differences = (['runTier', 'coilTier', 'machineConfigTiers'] as const).filter(key => fingerprint(primarySettings![key] ?? null) !== fingerprint(settings[key] ?? null))
+          if (differences.length) error('SHARED_MACHINE_SETTINGS_MISMATCH', `Node ${node.id}: shared sections resolve different physical settings (${differences.join(', ')}). Section 0: ${JSON.stringify(primarySettings)}; section ${section}: ${JSON.stringify(settings)}. Set explicit common overclockTier/coilTier/machineConfigTiers that resolve identically for every section, or use separate machine cards; no highest/default setting is selected automatically.`)
+        } catch { error('INVALID_MACHINE_SETTINGS', `Node ${node.id}: native machine settings could not be resolved for section ${section}.`) }
+      }
+      if (bindingOf(r)) issues.push(...validateMachineSettings(r, node))
       const overrides = section === 0 ? node.recipeInputOverrides : node.extraRecipes?.[section - 1]?.recipeInputOverrides
       for (const [key, override] of Object.entries(overrides ?? {})) {
         const original = /^\d+$/.test(key) ? r.inputs[Number(key)] : undefined

@@ -262,6 +262,57 @@ test('shared native extraRecipes round machine time once for the card, not once 
   } finally { await engine.close() }
 })
 
+test('an explicit unknown handler is rejected instead of being silently replaced by the native default', () => {
+  const f = fixture([row])
+  try {
+    const p = projectFrom(describeRecipes(f.packdata, [0]).recipes[0])
+    p.nodes[0].machineHandlerId = 'not-a-machine'
+    assert(prepareProject(f.packdata, p).issues.some(i => i.code === 'UNKNOWN_MACHINE_HANDLER'))
+    assert.equal(p.nodes[0].machineHandlerId, 'not-a-machine')
+    p.nodes[0].machineHandlerId = 'macerator'
+    noErrors(prepareProject(f.packdata, p))
+  } finally { f.close() }
+})
+
+for (const scenario of [
+  { name: 'heating coils', map: 'gt.recipe.blastfurnace', lowSpecial: 1800, highSpecial: 3600, lowEut: 120, highEut: 120, field: 'coilTier', setting: 'nichrome' },
+  { name: 'singleblock run tiers', map: 'gt.recipe.macerator', lowSpecial: 0, highSpecial: 0, lowEut: 30, highEut: 120, field: 'runTier', setting: 'MV' },
+  { name: 'field restriction coils', map: 'gg.recipe.naquadah_fuel_refine_factory', lowSpecial: 1, highSpecial: 3, lowEut: 120, highEut: 120, field: 'machineConfigTiers', setting: 't3' },
+]) test(`shared recipe-dependent ${scenario.name} require one actual configuration, and an explicit common higher setting solves`, async () => {
+  const f = fixture([
+    { ...row, h: scenario.map, special: scenario.lowSpecial, eut: scenario.lowEut, out: [{ id: 'test:first', meta: 0, n: 1 }] },
+    { ...row, h: scenario.map, special: scenario.highSpecial, eut: scenario.highEut, out: [{ id: 'test:second', meta: 0, n: 1 }] },
+  ], [{ ...handlers[0], key: scenario.map }])
+  const engine = new PlannerEngine()
+  try {
+    const [first, second] = describeRecipes(f.packdata, [0, 1]).recipes
+    const p = projectFrom(first, .1)
+    p.recipes.push(second.recipe)
+    p.nodes[0].extraRecipes = [{ recipeId: second.recipe.id }]
+    p.storages!.push({ id: 'second-product', kind: 'item', resourceId: 'test:second', targetMode: 'at-least', targetPerSecond: .1, position: { x: 200, y: 0 } })
+    p.edges.push({ id: 'second-wire', source: first.nodeTemplate.id, target: 'second-product', resourceKind: 'item', resourceId: 'test:second', sourceHandle: `r1:${portHandle('output', 'item', 'test:second')}` })
+    if (scenario.field === 'coilTier') delete p.nodes[0].coilTier
+    if (scenario.field === 'machineConfigTiers') delete p.nodes[0].machineConfigTiers
+    const unresolved = structuredClone(p)
+    const issues = prepareProject(f.packdata, p).issues
+    assert(issues.some(i => i.code === 'SHARED_MACHINE_SETTINGS_MISMATCH' && i.message.includes(scenario.field)))
+    assert.deepEqual(p, unresolved)
+    if (scenario.field === 'coilTier') p.nodes[0].coilTier = scenario.setting
+    else if (scenario.field === 'runTier') p.nodes[0].overclockTier = scenario.setting
+    else p.nodes[0].machineConfigTiers = { fieldRestrictionCoil: scenario.setting }
+    noErrors(prepareProject(f.packdata, p))
+    const report = await engine.calculate(p) as ThroughputResult
+    const summary = summarizeReport(p, report)
+    assert(summary.goals.every(goal => goal.met))
+    assert.equal(summary.machines.length, 1)
+    assert.equal(summary.machines[0].shared, true)
+    assert(summary.machines[0].energy!.sections.every(section => section.power.state === 'ok'))
+    assert(report.nodes[first.nodeTemplate.id].theoreticalMachinesRequired > 0)
+    assert(report.nodes[`${first.nodeTemplate.id}#r1`].theoreticalMachinesRequired > 0)
+    if (scenario.field === 'runTier') assert(summary.machines[0].energy!.sections.every(section => section.power.tier === 'MV'))
+  } finally { f.close(); await engine.close() }
+})
+
 test('zero machine pins and zero nameplate seeds are rejected, while an explicit zero source limit really stops supply', async () => {
   const engine = new PlannerEngine()
   try {
