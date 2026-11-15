@@ -93,10 +93,74 @@ test('bad numeric data, broken records and nonexistent parents produce explicit 
   await assert.rejects(store.save({ ...artifact(), parentId: 'pp_' + 'b'.repeat(32) }), { code: 'not_found' })
   assert.equal((await store.list()).total, 0)
   const saved = await store.save(artifact())
+  assert.equal((await store.list()).total, 1)
   const altered = JSON.parse(await readFile(path.join(dir, `${saved.id}.json`), 'utf8'))
   altered.project.id = 'changed-without-new-analysis'
   await writeFile(path.join(dir, `${saved.id}.json`), JSON.stringify(altered))
-  await assert.rejects(store.get(saved.id), { code: 'corrupt_record' })
+  // Listing again must inspect the changed record, not hide it behind an earlier directory entry.
   await assert.rejects(store.list(), { code: 'corrupt_record' })
+  await assert.rejects(store.get(saved.id), { code: 'corrupt_record' })
   assert.throws(() => plannerJson({ message: 'never truncate this' }, 8), { code: 'too_large' })
+})
+
+test('listing large analyses returns only compact directory metadata while export retains every report entry', async (t) => {
+  const { dir, cleanup } = tmpDir('planner-compact-directory-')
+  t.after(cleanup)
+  const store = new PlannerStore(dir)
+  const name = 'Large factory '.repeat(50)
+  const nodes = Array.from({ length: 600 }, (_, i) => ({ id: `machine-${i}`, notes: `node-detail-${i}` }))
+  const explanation = {
+    status: 'unmet', totalEuT: 12800,
+    goals: Array.from({ length: 100 }, (_, i) => ({ ownerId: `goal-${i}`, met: i < 50 })),
+    machines: nodes,
+    shortfalls: Array.from({ length: 37 }, (_, i) => ({ detail: `shortfall-detail-${i}` })),
+    forcedFlows: Array.from({ length: 350 }, (_, i) => ({ detail: `forced-detail-${i}` })),
+    externalInputs: Array.from({ length: 400 }, (_, i) => ({ detail: `external-input-detail-${i}` })),
+    externalOutputs: Array.from({ length: 125 }, (_, i) => ({ detail: `external-output-detail-${i}` })),
+    issues: Array.from({ length: 500 }, (_, i) => ({ severity: i < 100 ? 'error' : 'warning', message: `issue-detail-${i}` })),
+    assumptions: ['sustained feed', 'power', 'configured machines', 'output disposal'],
+  }
+  const saved = await store.save({ ...artifact(), project: { schemaVersion: 1, id: 'large', name, nodes },
+    report: { nodes, lastNativeField: 'all native data is retained' }, explanation })
+  const before = await readFile(path.join(dir, `${saved.id}.json`), 'utf8')
+  // A second full artifact confirms only the requested page is returned, not retained reports for the whole directory.
+  await store.save({ ...artifact(1), project: { schemaVersion: 1, id: 'large-next', name, nodes }, explanation })
+  const page = await new PlannerStore(dir).list({ offset: 1, limit: 1 })
+  assert.equal(page.total, 2)
+  assert.equal(page.items.length, 1)
+  const entry = page.items[0]
+  assert.equal(entry.id, saved.id)
+  assert.equal(entry.status, 'unmet')
+  assert.equal(entry.totalEuT, 12800)
+  assert.deepEqual(entry.counts, {
+    goals: 100, unmetGoals: 50, machines: 600, shortfalls: 37, forcedFlows: 350,
+    externalInputs: 400, externalOutputs: 125, issues: 500, errors: 100, warnings: 400, assumptions: 4,
+  })
+  assert.equal(entry.namePreview, name.slice(0, 120))
+  assert.equal(entry.namePreviewTruncated, true)
+  assert.ok(!('project' in entry) && !('preparedProject' in entry) && !('report' in entry) && !('explanation' in entry) && !('provenance' in entry))
+  assert.ok(Buffer.byteLength(JSON.stringify(page)) < 1200, 'Directory pages should contain bounded labels and counts, not hundreds of report rows.')
+  assert.doesNotMatch(JSON.stringify(page), /node-detail|issue-detail|external-input-detail|shortfall-detail/)
+  const exported = await store.export(saved.id)
+  assert.deepEqual(exported.record, JSON.parse(before))
+  assert.deepEqual(exported.record.explanation, explanation)
+  assert.equal((exported.record.project as { name: string }).name, name)
+  assert.equal((exported.record.report as { nodes: { notes: string }[] }).nodes.at(-1)?.notes, 'node-detail-599')
+  assert.equal(await readFile(path.join(dir, `${saved.id}.json`), 'utf8'), before)
+})
+
+test('directory failure messages are labeled previews and the full error remains readable', async (t) => {
+  const { dir, cleanup } = tmpDir('planner-error-preview-')
+  t.after(cleanup)
+  const store = new PlannerStore(dir)
+  const message = 'engine failure detail '.repeat(100)
+  const saved = await store.save({ ...artifact(), outcome: 'failed', explanation: { status: 'failed' },
+    report: null, error: { code: 'timeout', message } })
+  const entry = (await store.list()).items[0]
+  assert.equal(entry.status, 'failed')
+  assert.equal(entry.errorCode, 'timeout')
+  assert.equal(entry.errorCodeTruncated, false)
+  assert.equal(entry.errorMessagePreview, message.slice(0, 240))
+  assert.equal(entry.errorMessagePreviewTruncated, true)
+  assert.equal((await store.get(saved.id)).error?.message, message)
 })

@@ -32,6 +32,7 @@ export interface PlannerRecord {
 
 export type PlannerRecordInput = Omit<PlannerRecord, 'schemaVersion' | 'id' | 'projectHash'>
 
+/** Small directory metadata only. Full graphs, reports and explanations are available from get/read/export. */
 export interface PlannerRecordSummary {
   id: string
   createdAt: string
@@ -39,8 +40,29 @@ export interface PlannerRecordSummary {
   parentId?: string
   projectHash: string
   outcome: PlannerRecord['outcome']
-  explanation: unknown
-  error?: PlannerRecord['error']
+  status: string
+  counts: {
+    goals: number
+    unmetGoals: number
+    machines: number
+    shortfalls: number
+    forcedFlows: number
+    externalInputs: number
+    externalOutputs: number
+    issues: number
+    errors: number
+    warnings: number
+    assumptions: number
+  }
+  totalEuT?: number
+  /** At most 120 characters; only a label preview, never a replacement for project.name. */
+  namePreview?: string
+  namePreviewTruncated?: boolean
+  /** Error details stay in the record; the directory contains bounded previews only. */
+  errorCode?: string
+  errorCodeTruncated?: boolean
+  errorMessagePreview?: string
+  errorMessagePreviewTruncated?: boolean
 }
 
 export interface PlannerPage<T> {
@@ -129,13 +151,44 @@ export function plannerPage<T>(items: readonly T[], options: { offset?: number; 
   return { items: page, offset, limit, total: items.length, more, nextOffset: more ? offset + page.length : null }
 }
 
+function object(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+}
+function array(value: unknown): unknown[] { return Array.isArray(value) ? value : [] }
+
 export function recordSummary(record: PlannerRecord): PlannerRecordSummary {
+  const explanation = object(record.explanation)
+  const goals = array(explanation.goals)
+  const issues = array(explanation.issues).length ? array(explanation.issues) : record.issues
+  const name = object(record.project).name
+  const status = explanation.status
   return {
     id: record.id, createdAt: record.createdAt, durationMs: record.durationMs,
     ...(record.parentId !== undefined ? { parentId: record.parentId } : {}),
     projectHash: record.projectHash, outcome: record.outcome,
-    explanation: record.explanation,
-    ...(record.error !== undefined ? { error: record.error } : {}),
+    status: typeof status === 'string' && ['satisfied', 'needs-external-supply', 'unmet', 'infeasible', 'unanchored', 'invalid', 'failed'].includes(status)
+      ? status : record.outcome,
+    counts: {
+      goals: goals.length,
+      unmetGoals: goals.reduce<number>((count, goal) => count + (object(goal).met === true ? 0 : 1), 0),
+      machines: array(explanation.machines).length,
+      shortfalls: array(explanation.shortfalls).length,
+      forcedFlows: array(explanation.forcedFlows).length,
+      externalInputs: array(explanation.externalInputs).length,
+      externalOutputs: array(explanation.externalOutputs).length,
+      issues: issues.length,
+      errors: issues.reduce<number>((count, issue) => count + (object(issue).severity === 'error' ? 1 : 0), 0),
+      warnings: issues.reduce<number>((count, issue) => count + (object(issue).severity === 'warning' ? 1 : 0), 0),
+      assumptions: array(explanation.assumptions).length,
+    },
+    ...(typeof explanation.totalEuT === 'number' && Number.isFinite(explanation.totalEuT) ? { totalEuT: explanation.totalEuT } : {}),
+    ...(typeof name === 'string' ? { namePreview: name.slice(0, 120), namePreviewTruncated: name.length > 120 } : {}),
+    ...(record.error !== undefined ? {
+      errorCode: record.error.code.slice(0, 80),
+      errorCodeTruncated: record.error.code.length > 80,
+      errorMessagePreview: record.error.message.slice(0, 240),
+      errorMessagePreviewTruncated: record.error.message.length > 240,
+    } : {}),
   }
 }
 
@@ -191,7 +244,9 @@ export class PlannerStore {
         !Number.isFinite(record.durationMs) || record.durationMs < 0 ||
         !['calculated', 'rejected', 'failed'].includes(record.outcome) ||
         !Array.isArray(record.issues) || record.explanation === undefined || record.report === undefined ||
-        record.provenance === undefined || record.engine === undefined || plannerHash(record.project) !== record.projectHash) {
+        record.provenance === undefined || record.engine === undefined ||
+        (record.error !== undefined && (record.error === null || typeof record.error.code !== 'string' || typeof record.error.message !== 'string')) ||
+        plannerHash(record.project) !== record.projectHash) {
         throw new Error('record schema or project checksum does not match')
       }
       if (record.parentId !== undefined) assertPlannerId(record.parentId)
