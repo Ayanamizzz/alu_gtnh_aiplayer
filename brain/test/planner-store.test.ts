@@ -110,7 +110,8 @@ test('listing large analyses returns only compact directory metadata while expor
   const name = 'Large factory '.repeat(50)
   const nodes = Array.from({ length: 600 }, (_, i) => ({ id: `machine-${i}`, notes: `node-detail-${i}` }))
   const explanation = {
-    status: 'unmet', totalEuT: 12800,
+    status: 'unmet', totalEuT: 12800, averageEuT: 9600, buildPeakEuT: 12800,
+    averageSteamMbPerSecond: 800, buildPeakSteamMbPerSecond: 1600,
     goals: Array.from({ length: 100 }, (_, i) => ({ ownerId: `goal-${i}`, met: i < 50 })),
     machines: nodes,
     shortfalls: Array.from({ length: 37 }, (_, i) => ({ detail: `shortfall-detail-${i}` })),
@@ -132,6 +133,10 @@ test('listing large analyses returns only compact directory metadata while expor
   assert.equal(entry.id, saved.id)
   assert.equal(entry.status, 'unmet')
   assert.equal(entry.totalEuT, 12800)
+  assert.equal(entry.averageEuT, 9600)
+  assert.equal(entry.buildPeakEuT, 12800)
+  assert.equal(entry.averageSteamMbPerSecond, 800)
+  assert.equal(entry.buildPeakSteamMbPerSecond, 1600)
   assert.deepEqual(entry.counts, {
     goals: 100, unmetGoals: 50, machines: 600, shortfalls: 37, forcedFlows: 350,
     externalInputs: 400, externalOutputs: 125, issues: 500, errors: 100, warnings: 400, assumptions: 4,

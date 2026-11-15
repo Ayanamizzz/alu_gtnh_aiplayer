@@ -8,6 +8,7 @@ import { DesignWorkspace } from '../src/design/index.ts'
 import { loadPackData, RecipeBook } from '../src/packdata/index.ts'
 import type { PackData } from '../src/packdata/index.ts'
 import { PlannerEngine } from '../src/planner/engine.ts'
+import type { PlannerCalculateOptions } from '../src/planner/engine.ts'
 import type { DescribedRecipe, FactoryProject, ReportSummary } from '../src/planner/model.ts'
 import type { PlannerRecord } from '../src/planner/store.ts'
 import { PlannerWorkspace } from '../src/planner/workspace.ts'
@@ -161,7 +162,10 @@ test('timeout, rejection and cancellation are saved as failed analyses; the next
   assert.equal(record(timed.data).report, null)
   const timeoutRead = await s.run({ action: 'read', id: record(timed.data).id })
   assert.match(timeoutRead.content, /ERROR timeout/)
-  const aborted = await s.planner.solve(project, { signal: AbortSignal.abort() })
+  const controller = new AbortController()
+  const running = s.planner.solve(project, { signal: controller.signal })
+  controller.abort()
+  const aborted = await running
   assert.equal(aborted.error?.code, 'aborted')
   assert.equal(aborted.outcome, 'failed')
   const broken = structuredClone(project)
@@ -284,6 +288,118 @@ test('real packdata recipes travel through the registered tool into a native pla
     }
     assert.deepEqual(s.calls, [])
   })
+
+test('tool summaries and compact lists distinguish average energy from native nameplate and page complete per-machine energy', async (t) => {
+  const s = setup(t, false)
+  const project: FactoryProject = {
+    schemaVersion: 1, id: 'half-fed', name: 'Half-fed Build mode line',
+    recipes: [
+      { id: 'feed', name: 'Feed process', machineType: 'Macerator', minimumTier: 'LV', durationTicks: 40, eut: 30,
+        inputs: [], outputs: [{ kind: 'item', id: 'feed', amount: 1 }] },
+      { id: 'product', name: 'Product process', machineType: 'Macerator', minimumTier: 'LV', durationTicks: 20, eut: 30,
+        inputs: [{ kind: 'item', id: 'feed', amount: 1 }], outputs: [{ kind: 'item', id: 'product', amount: 1 }] },
+    ],
+    nodes: [
+      { id: 'a', recipeId: 'feed', machineCount: 1, parallel: 1, overclockTier: 'LV', enabled: true, position: { x: 0, y: 0 } },
+      { id: 'b', recipeId: 'product', machineCount: 1, parallel: 1, overclockTier: 'LV', enabled: true, position: { x: 1, y: 0 },
+        targetOutput: { kind: 'item', resourceId: 'product', amountPerSecond: 1 } },
+    ],
+    storages: [{ id: 'out', kind: 'item', resourceId: 'product', position: { x: 2, y: 0 } }],
+    edges: [{ id: 'feed', source: 'a', target: 'b', resourceKind: 'item', resourceId: 'feed' },
+      { id: 'out', source: 'b', target: 'out', resourceKind: 'item', resourceId: 'product' }], fuelProfiles: [],
+  }
+  const solved = await s.run({ action: 'solve', project })
+  assert.equal(solved.isError, undefined, solved.content)
+  const id = record(solved.data).id
+  // One 30 EU/t feeder runs fully and the second 30 EU/t machine runs halfway.
+  assert.equal(explanation(solved.data).totalEuT, 60)
+  assert.equal(explanation(solved.data).averageEuT, 45)
+  assert.equal(explanation(solved.data).buildPeakEuT, 60)
+  assert.match(solved.content, /Average electric draw \(load-weighted\): 45 EU\/t/)
+  assert.match(solved.content, /Native totalEuT: 60 EU\/t \(Build: nameplate/)
+  const read = await s.run({ action: 'read', id, section: 'summary' })
+  const summary = (read.data as PlannerReadResult).summary
+  assert.equal(summary.totalEuT, 60)
+  assert.equal(summary.averageEuT, 45)
+  assert.equal(summary.buildPeakEuT, 60)
+  const listed = await s.planner.list()
+  assert.equal(listed.items[0].totalEuT, 60)
+  assert.equal(listed.items[0].averageEuT, 45)
+  assert.equal(listed.items[0].buildPeakEuT, 60)
+  assert.ok(!('explanation' in listed.items[0]))
+  const totals = await s.run({ action: 'read', id, section: 'energy', limit: 1 })
+  assert.equal((totals.data as PlannerReadResult).total, 3)
+  assert.equal((totals.data as PlannerReadResult).nextOffset, 1)
+  assert.equal(((totals.data as PlannerReadResult).items[0] as { averageEuT: number }).averageEuT, 45)
+  for (const [index, machine] of explanation(solved.data).machines.entries()) {
+    const page = await s.run({ action: 'read', id, section: 'energy', offset: index + 1, limit: 1 })
+    assert.deepEqual((page.data as PlannerReadResult).items[0], { kind: 'machine', nodeId: machine.nodeId, energy: machine.energy })
+    assert.equal(machine.energy?.sections[0].power.tier, 'LV')
+    assert.equal(machine.energy?.sections[0].perMachineRunningEuT, 30)
+  }
+  assert.deepEqual(s.calls, [])
+})
+
+test('oversized, deeply nested and already-cancelled projects are refused before local lookups or saving payloads', async (t) => {
+  const s = setup(t)
+  const d = s.planner.describe([0]).recipes[0]
+  const project = oneRecipeProject(d)
+  const book = s.packdata!.recipes!
+  const get = book.get.bind(book)
+  let lookups = 0
+  t.mock.method(book, 'get', (ref: number) => { lookups++; return get(ref) })
+  const oversized = { ...project, notes: 'x'.repeat(9 * 1024 * 1024) }
+  const large = await s.run({ action: 'solve', project: oversized })
+  assert.equal(large.isError, true, large.content)
+  assert.equal((large.data as { error: { code: string } }).error.code, 'limit')
+  assert.equal((large.data as { id?: string }).id, undefined)
+  assert.equal(lookups, 0, 'Input budgets must be checked before local binding preparation.')
+  let nested: unknown = null
+  for (let i = 0; i < 80; i++) nested = { nested }
+  const deep = await s.run({ action: 'solve', project: { ...project, gtnhplanner: { nested } } })
+  assert.equal(deep.isError, true, deep.content)
+  assert.equal((deep.data as { error: { code: string } }).error.code, 'limit')
+  s.ctx.signal = AbortSignal.abort()
+  const cancelled = await s.run({ action: 'solve', project })
+  assert.equal(cancelled.isError, true, cancelled.content)
+  assert.equal((cancelled.data as { error: { code: string } }).error.code, 'aborted')
+  assert.equal((cancelled.data as { id?: string }).id, undefined)
+  assert.equal(lookups, 0)
+  await assert.rejects(s.planner.solve(project, { timeoutMs: 120001 }), { code: 'invalid' })
+  assert.equal(lookups, 0, 'Invalid deadlines must also be rejected before preparation.')
+  assert.equal((await s.planner.list()).total, 0)
+  assert.equal(s.engine.info().workerStarts, 0)
+  assert.deepEqual(s.calls, [])
+})
+
+test('local preparation spends the same deadline as the real engine, including exhaustion before dispatch', async (t) => {
+  const s = setup(t)
+  const project = oneRecipeProject(s.planner.describe([0]).recipes[0])
+  const book = s.packdata!.recipes!
+  const get = book.get.bind(book)
+  const sleeper = new Int32Array(new SharedArrayBuffer(4))
+  // Delay only the local data boundary; preparation and the numerical engine remain real.
+  t.mock.method(book, 'get', (ref: number) => { Atomics.wait(sleeper, 0, 0, 80); return get(ref) })
+  const calculate = s.engine.calculateDetailed.bind(s.engine)
+  const forwarded: number[] = []
+  t.mock.method(s.engine, 'calculateDetailed', (input: unknown, options: PlannerCalculateOptions = {}) => {
+    forwarded.push(options.timeoutMs!)
+    return calculate(input, options)
+  })
+  const solved = await s.run({ action: 'solve', project, timeoutMs: 10000 })
+  assert.equal(solved.isError, undefined, solved.content)
+  assert.equal(forwarded.length, 1)
+  assert.ok(forwarded[0] > 0 && forwarded[0] <= 9950, `Preparation was not charged to the deadline: forwarded ${forwarded[0]} ms.`)
+  const timed = await s.run({ action: 'solve', project, timeoutMs: 10 })
+  assert.equal(timed.isError, true, timed.content)
+  assert.equal(record(timed.data).error?.code, 'timeout')
+  assert.equal(record(timed.data).report, null)
+  assert.deepEqual(record(timed.data).project, project, 'A safe snapshot already existed, so the timeout is retained.')
+  assert.equal((record(timed.data).engine as { run: unknown }).run, null)
+  assert.equal(forwarded.length, 1, 'An exhausted preparation deadline must not start another engine calculation.')
+  assert.equal((await s.planner.list()).total, 2)
+  assert.deepEqual(s.calls, [])
+})
 
 test('closing the workspace waits for the interrupted analysis to be saved', async (t) => {
   const s = setup(t, false)

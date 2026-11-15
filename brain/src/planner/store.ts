@@ -54,7 +54,12 @@ export interface PlannerRecordSummary {
     warnings: number
     assumptions: number
   }
+  /** Original native total: Build uses nameplate, Solve/Plan uses its native scaled total. */
   totalEuT?: number
+  averageEuT?: number
+  buildPeakEuT?: number
+  averageSteamMbPerSecond?: number
+  buildPeakSteamMbPerSecond?: number
   /** At most 120 characters; only a label preview, never a replacement for project.name. */
   namePreview?: string
   namePreviewTruncated?: boolean
@@ -182,6 +187,10 @@ export function recordSummary(record: PlannerRecord): PlannerRecordSummary {
       assumptions: array(explanation.assumptions).length,
     },
     ...(typeof explanation.totalEuT === 'number' && Number.isFinite(explanation.totalEuT) ? { totalEuT: explanation.totalEuT } : {}),
+    ...(typeof explanation.averageEuT === 'number' && Number.isFinite(explanation.averageEuT) ? { averageEuT: explanation.averageEuT } : {}),
+    ...(typeof explanation.buildPeakEuT === 'number' && Number.isFinite(explanation.buildPeakEuT) ? { buildPeakEuT: explanation.buildPeakEuT } : {}),
+    ...(typeof explanation.averageSteamMbPerSecond === 'number' && Number.isFinite(explanation.averageSteamMbPerSecond) ? { averageSteamMbPerSecond: explanation.averageSteamMbPerSecond } : {}),
+    ...(typeof explanation.buildPeakSteamMbPerSecond === 'number' && Number.isFinite(explanation.buildPeakSteamMbPerSecond) ? { buildPeakSteamMbPerSecond: explanation.buildPeakSteamMbPerSecond } : {}),
     ...(typeof name === 'string' ? { namePreview: name.slice(0, 120), namePreviewTruncated: name.length > 120 } : {}),
     ...(record.error !== undefined ? {
       errorCode: record.error.code.slice(0, 80),

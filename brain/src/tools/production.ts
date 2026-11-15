@@ -35,14 +35,18 @@ function summaryText(summary: PlannerRecordSummaryView): string {
     ...(summary.outcome !== 'calculated' || summary.status === 'failed' || summary.status === 'invalid'
       ? ['Goals and external supply have not been reliably assessed. Empty lists below do not mean the plan is satisfied.'] : []),
     ...(summary.error ? [`ERROR ${summary.error.code}: ${summary.error.message}`] : []),
-    ...(summary.totalEuT !== undefined ? [`Total power: ${summary.totalEuT} EU/t.`] : []),
+    ...(summary.averageEuT !== undefined ? [`Average electric draw (load-weighted): ${summary.averageEuT} EU/t.`] : []),
+    ...(summary.buildPeakEuT !== undefined ? [`Integer-build full-speed electric requirement: ${summary.buildPeakEuT} EU/t; scheduling may reduce simultaneous peak.`] : []),
+    ...(summary.totalEuT !== undefined ? [`Native totalEuT: ${summary.totalEuT} EU/t (Build: nameplate; Solve/Plan: native scaled total).`] : []),
+    ...(Number(summary.averageSteamMbPerSecond) > 0 || Number(summary.buildPeakSteamMbPerSecond) > 0
+      ? [`Steam demand: average ${summary.averageSteamMbPerSecond} mB/s; integer-build full-speed ${summary.buildPeakSteamMbPerSecond} mB/s. Zero EU/t on a steam machine does not mean free energy.`] : []),
     ...facts('Unmet goals', summary.unmetGoals, 'goals'),
     ...facts('Shortfalls', summary.shortfalls, 'shortfalls'),
     ...facts('External input assumptions', summary.externalInputs, 'externalInputs'),
     ...facts('Forced boundary flows', summary.forcedFlows, 'flows'),
     ...facts('Diagnostics', summary.issues, 'diagnostics'),
     ...facts('Assumptions', summary.assumptions, 'assumptions'),
-    'Read nodes/machines for loads and integer build counts, flows for material rates, and diagnostics before drawing conclusions. Native report and original project are complete in export.',
+    'Read nodes/machines for loads and integer build counts, energy for voltage/amps/hatches/steam, flows for material rates, and diagnostics before drawing conclusions. Native report and original project are complete in export.',
   ].join('\n')
 }
 
@@ -82,7 +86,7 @@ export const productionPlan: Tool = {
     machineHandlerId: str('describe: exact native machine handler/profile ID, not a translated display name.'),
     project: { type: 'object', properties: {}, additionalProperties: true, description: 'solve: complete native FactoryProject JSON. Construct or modify it yourself; do not give a file path. Original fields are preserved.' },
     parentId: str('solve: optional prior analysis ID for comparing alternatives. That record is never changed.'),
-    timeoutMs: int('solve: total calculation deadline including queue wait; default 30000 milliseconds.', { min: 1, max: 120000 }),
+    timeoutMs: int('solve: one deadline for input checks, local preparation, queue wait and calculation; default 30000 milliseconds.', { min: 1, max: 120000 }),
     allowStaleBindings: bool('solve: explicitly calculate saved local recipe snapshots even if local bindings changed. Default false; stale assumptions remain visible.'),
     id: str('read/export: saved analysis ID returned by solve or list.'),
     section: str('read: section to page (default summary). native/record/project use JSON-pointer leaf entries; export returns the whole structured record.', { enum: [...PLANNER_READ_SECTIONS] }),

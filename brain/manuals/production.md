@@ -30,9 +30,9 @@ return {
 ```
 
 - `describe`：可选 `refs`（一次最多 50 个）、`machineHandlerId`（准确的原版标识）。`data.recipes` 每项含 `recipe`、`nodeTemplate`、`ports`、`prerequisites`、`provenance`、`machineOptions` 和 `issues`；`data.projectTemplate` 能直接拿来改。
-- `solve`：给完整 `project` 对象，不是路径。可选 `parentId`、`timeoutMs`（默认 30000，最多 120000）、`allowStaleBindings`（默认 false）。data 是保存的完整记录：原图 `project`、实际校验输入 `preparedProject`、本地配方/数据版本快照 `provenance`、引擎来源和本次运行凭据 `engine`、原生结果 `report`、解释 `explanation`、诊断和错误。一次超时/取消/拒绝会明确报告，不把它当成功计算。若返回了记录 ID，失败经过也能重读。
+- `solve`：给完整 `project` 对象，不是路径。可选 `parentId`、`timeoutMs`（默认 30000，最多 120000；输入检查、本地绑定准备、排队和求解共用这一个时限）、`allowStaleBindings`（默认 false）。data 是保存的完整记录：原图 `project`、实际校验输入 `preparedProject`、本地配方/数据版本快照 `provenance`、引擎来源和本次运行凭据 `engine`、原生结果 `report`、解释 `explanation`、诊断和错误。过大、JSON/结构预算不合格、调用前已取消的请求会在准备之前拒绝，不保存大载荷；已有安全快照后发生的超时/取消/拒绝会保存失败经过。若返回了记录 ID，失败经过能重读，不把它当成功计算。
 - `read`：给 `id`，可选 `section`（默认 summary）、`offset`（默认 0）、`limit`（默认 25，最多 200）。返回 `items/total/more/nextOffset`。只要 more 为 true，就用 nextOffset 继续读。摘要在每一页重复安全相关事实，即使那一页已没有条目。
-- `list`：同样用 offset/limit 翻页，最新记录在前。
+- `list`：同样用 offset/limit 翻页，最新记录在前。目录只返回状态、目标/未满足/外部流/诊断计数、能耗数字与有标记的名称/错误预览，不带整张图或完整 explanation；详情用 read/export。
 - `export`：给 `id`。`data.record` 是完整结构，`data.json` 是完整 JSON 文本，`data.filename` 是下载建议名。没有任意本地路径参数，也不会偷偷导入文件。
 
 可读的 section：
@@ -42,6 +42,7 @@ return {
 | summary | 状态、未满足目标、外部输入、forced flows、假设与诊断 |
 | nodes | 原生逐节点负载、运转率、功率和警告 |
 | machines | 机器负载及整数建造数，共享组说明 |
+| energy | 平均/整数设备满速能耗与逐机组原生电压、安培、能量仓、蒸汽报告 |
 | flows | 原生边、资源账、storage 以及 forced flows |
 | goals / shortfalls | 目标是否满足及短缺 |
 | externalInputs / externalOutputs | 外部供料与排出假设 |
@@ -68,6 +69,7 @@ return {
 
 - item/s 与 mB/s 是稳态速率；1 GT L = 1 mB，20 tick = 1 秒。`view.rateUnit` 是原版显示设置，不改变数据身份。库存 1000 mB 只能支持有限时间，不能当成 1000 mB/s 的无限水源。
 - 负载 0.35 台表示这条工艺用到一台的 35% 产能，不是可以造 0.35 台。整数建造需求是容量建议，不是现场可用台数；多方块成型和供电仍要查。
+- 能耗看清口径：`averageEuT` 是按负载加权的实际平均；`buildPeakEuT` 是建议整数设备满速运行所需的总功率，共享机组取节中最大运行功率，调度可能降低同时峰值。保留的原版 `totalEuT` 在 Build 模式是名牌总值，在 Solve/Plan 模式按原版缩放，不能通当平均值。`energy` 页保留每节原生 voltage/amps/hatches 和蒸汽报告；`averageSteamMbPerSecond/buildPeakSteamMbPerSecond` 是平均/整数设备满速汽耗，蒸汽机 0 EU/t 不表示不用能源。
 - 概率产物是长期期望产量，短批次不会保证收齐。实际有限批次备料用 `total_materials` 等工具；产线计算与有限材料树互补。
 - `satisfied` 是在列出的静态假设下满足目标；`needs-external-supply` 还依赖外部供料；`unmet/infeasible/unanchored/invalid/failed` 按摘要和诊断处理。求解 Promise 正常返回、原生 `solved:true`、保存了 ID，都不足以替代这些条件检查。
 - 本地 ref 是当前配方文件的行号。绑定记录保留完整配方签名和数据版本，再算时会核对；变更后重新 describe 更新绑定，或明确设置 allowStaleBindings 按旧快照假设算。原版/自写配方也能算，但标为 `declared-unverified`，不声称与本服匹配。
