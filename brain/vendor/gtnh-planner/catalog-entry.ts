@@ -15,5 +15,10 @@ export { sectionHandleId, splitSectionHandleId, sectionNodeId, parseSectionNodeI
 export { makePortKey, parsePortKey } from './upstream/src/lib/solver/plan/port-key';
 export { makeResourceHandleId, parseResourceHandleId } from './upstream/src/components/flow/resource-handles';
 export { PROJECT_SCHEMA_VERSION, TICKS_PER_SECOND } from './upstream/src/lib/model/types';
+export { getStorageRoles } from './upstream/src/lib/model/storage-role';
+export { storageTargetMode, hasStorageTarget } from './upstream/src/lib/model/storage-target';
 export { getOverclockedRecipeStats } from './upstream/src/lib/solver/overclock';
+export { getNodePowerReport, getNodeSteamReport, hasPowerReport, isPowerStalled, describePowerStall } from './upstream/src/lib/solver/power-report';
+export { getNodePowerBudget, getNodePowerAmps, getNodeRunTier, getPowerPoolEuT, isMultiblockRecipe } from './upstream/src/lib/solver/power';
+export { getVoltageTierMaxEuT, getVoltageTierIndex } from './upstream/src/lib/model/tiers';
 export { getMachineParallelMultiplier, getMachineOutputMultiplier } from './upstream/src/lib/solver/machine-effects';

@@ -2985,6 +2985,7 @@ function isHighPressureSteamHandler(handler) {
   return /\bhigh pressure\b/i.test(handler.label);
 }
 var GT_FURNACE_RECIPE_TICKS = 128;
+var GT_FURNACE_RECIPE_EUT = 4;
 function isSmeltingRecipeMap(recipe) {
   return /^(?:smelting|furnace)$/i.test(recipeMapName(recipe).trim());
 }
@@ -3384,7 +3385,91 @@ function parseResourceHandleId(handleId) {
 var PROJECT_SCHEMA_VERSION = 1;
 var TICKS_PER_SECOND = 20;
 
+// upstream/src/lib/model/storage-role.ts
+function getStorageRoles(project) {
+  const roles = /* @__PURE__ */ new Map();
+  const storages = project.storages ?? [];
+  if (storages.length === 0) {
+    return roles;
+  }
+  const hasIn = /* @__PURE__ */ new Set();
+  const hasOut = /* @__PURE__ */ new Set();
+  const ids = new Set(storages.map((storage) => storage.id));
+  for (const edge of project.edges) {
+    if (ids.has(edge.target)) {
+      hasIn.add(edge.target);
+    }
+    if (ids.has(edge.source)) {
+      hasOut.add(edge.source);
+    }
+  }
+  for (const storage of storages) {
+    roles.set(storage.id, storageRoleFor(storage, hasIn.has(storage.id), hasOut.has(storage.id), project.poolMode === true));
+  }
+  return roles;
+}
+function storageRoleFor(storage, fed, drawn, poolMode) {
+  const drainRole = () => storage.drainMode === "byproduct" ? "byproduct" : storage.drainMode === "trash" ? "trash" : "product";
+  if (poolMode) {
+    const side = poolSideOf(storage, fed, drawn);
+    return side === "source" ? "source" : side === "drain" ? drainRole() : "idle";
+  }
+  if (fed) {
+    return drawn ? "buffer" : drainRole();
+  }
+  if (drawn) {
+    return "source";
+  }
+  if ((storage.targetPerSecond ?? 0) < 0) return "source";
+  if (storage.poolSide === "drain") {
+    return drainRole();
+  }
+  if (storage.poolSide === "source") {
+    return "source";
+  }
+  return "idle";
+}
+function poolSideOf(storage, fed, drawn) {
+  if ((storage.targetPerSecond ?? 0) < 0) return "source";
+  if (storage.poolSide) {
+    return storage.poolSide;
+  }
+  if (fed && !drawn) {
+    return "drain";
+  }
+  if (drawn && !fed) {
+    return "source";
+  }
+  return void 0;
+}
+
+// upstream/src/lib/model/storage-target.ts
+function isInputRate(storage, role) {
+  if ((storage.targetPerSecond ?? 0) < 0) return true;
+  if (storage.poolSide === "drain" && storage.targetPerSecond !== void 0) return false;
+  return role === "source" || role === void 0 && storage.poolSide === "source";
+}
+function storageTargetMode(storage, role) {
+  if (storage.targetMode) return storage.targetMode;
+  if (storage.poolTargetMode === "ignore") return "ignore";
+  if (isInputRate(storage, role)) return "exact";
+  return storage.poolTargetMode ?? "at-least";
+}
+function hasStorageTarget(storage, role) {
+  const mode = storageTargetMode(storage, role);
+  return mode !== "ignore" && storage.targetPerSecond !== void 0 && Number.isFinite(storage.targetPerSecond) && (storage.targetPerSecond !== 0 || mode === "exact" || mode === "at-most");
+}
+
 // upstream/src/lib/solver/power-input-rules.ts
+function maxInputTierSkips(machine) {
+  if (getMachineBehaviour(machine)?.unlimitedTierSkip) return Infinity;
+  const name = (machine ?? "").toLowerCase();
+  if (/precise (?:auto-)?assembler|industrial arc furnace|steam (grinder|squasher|separator|purifier|presser|blender|fuser|hearth)/.test(
+    name
+  ))
+    return 0;
+  return 1;
+}
 function hasAmperageOverclock(machine) {
   const name = (machine ?? "").toLowerCase();
   return !/fusion|nano forge|transcendent plasma mixer|godforge|(?:smelting|molten|plasma|exotic) module|nanochip|(?:assembly matrix|biological coordination|board processor|cutting chamber|encasement wrapper|etching array|optical organizer|smd processor|superconductor splitter|splitter|wire tracer) module|industrial arc furnace|steam (grinder|squasher|separator|purifier|presser|blender|fuser|hearth)/.test(
@@ -4364,23 +4449,183 @@ function resolveOverclockRule(recipe, node, heatOverclockSteps) {
   }
   return recipe.machineProfile?.perfectOverclock ? OVERCLOCK.perfect() : OVERCLOCK.normal();
 }
+
+// upstream/src/lib/solver/power-report.ts
+function hasPowerReport(recipe) {
+  if (!(Math.abs(recipe.eut) > 0) || recipe.durationTicks <= 0) {
+    return false;
+  }
+  if (getCropsNhStats(recipe) || isIndustrialApiaryMachineType(recipe.machineType)) {
+    return false;
+  }
+  return true;
+}
+function getNodePowerReport(recipe, node) {
+  const effectiveRecipe = recipe.machineType ? applyMachineHandlerToRecipe(recipe, node) : recipe;
+  const minimumTier = getRecipeMinimumVoltageTier(effectiveRecipe);
+  const tier = getNodeRunTier(effectiveRecipe, node);
+  const isMultiblock = isMultiblockRecipe(effectiveRecipe);
+  const hatches = getNodeEnergyHatches(effectiveRecipe, node);
+  const hatchType = getEnergyHatchType(node.energyHatchType);
+  const typedBudget = getNodePowerBudget(effectiveRecipe, node) !== void 0;
+  const amps = getNodePowerAmps(effectiveRecipe, node);
+  const poolEuT = getVoltageTierMaxEuT(tier) * amps;
+  const rawEuT = Math.abs(effectiveRecipe.eut);
+  const eutMultiplier = getMachineEutMultiplier(effectiveRecipe, node);
+  const heatDiscount = getHeatDiscountMultiplier(
+    effectiveRecipe,
+    node,
+    tier,
+    getEffectiveVoltageOrdinal(effectiveRecipe, node, tier)
+  );
+  const singleDrawEuT = Math.ceil(rawEuT * eutMultiplier * heatDiscount);
+  const stats = getOverclockedRecipeStats(recipe, node);
+  const runtimeVariant = selectRuntimeCalculationVariant(effectiveRecipe, node);
+  const parallels = runtimeVariant?.parallel ?? getMachineParallelMultiplier(effectiveRecipe, node);
+  const drawEuT = Math.abs(stats.eut) * parallels;
+  const behaviour = getMachineBehaviour(effectiveRecipe.machineType);
+  const voltageLimit = behaviour?.inputVoltageTierLimit?.(node.machineConfigTiers ?? {});
+  const casingGateReason = voltageLimit !== void 0 && getVoltageTierIndex(getVoltageTierForEuT(rawEuT)) > voltageLimit ? "Machine casing voltage is too low for this recipe. Select a higher machine casing; UHV casings remove the limit." : void 0;
+  const fusion = getFusionStats(effectiveRecipe);
+  const fusionGateReason = fusion && !fusion.eligible ? fusion.recipeMark === void 0 ? "Fusion startup metadata is unavailable for this recipe." : `This recipe requires a Mk-${fusion.recipeMark} fusion reactor or higher.` : void 0;
+  const recipeGateReason = fusionGateReason ?? behaviour?.recipeGate?.(
+    buildMachineContext(effectiveRecipe, node)
+  ) ?? casingGateReason;
+  return {
+    state: recipeGateReason ? "over-tier" : getPowerState(effectiveRecipe, tier, minimumTier, isMultiblock, poolEuT, singleDrawEuT),
+    recipeGateReason,
+    tier,
+    minimumTier,
+    hatches,
+    hatchTypeLabel: isMultiblock && !typedBudget && hatchType.exotic ? hatchType.label : void 0,
+    hatchChip: isMultiblock && !typedBudget && hatchType.exotic ? hatchType.chip : void 0,
+    typedBudget,
+    isMultiblock,
+    amps,
+    poolEuT,
+    singleDrawEuT,
+    parallels,
+    drawEuT,
+    overclockSteps: stats.overclockSteps,
+    perfectOverclockSteps: stats.perfectOverclockSteps,
+    perfectSpeedFactor: stats.perfectSpeedFactor,
+    perfectEuFactor: stats.perfectEuFactor,
+    usage: Number.isFinite(poolEuT) && poolEuT > 0 ? drawEuT / poolEuT : 0
+  };
+}
+function getPowerState(effectiveRecipe, tier, minimumTier, isMultiblock, poolEuT, singleDrawEuT) {
+  const rawEuT = Math.abs(effectiveRecipe.eut);
+  if (!(rawEuT > 0) || !Number.isFinite(poolEuT)) {
+    return "ok";
+  }
+  const powerTier = getVoltageTierForEuT(rawEuT);
+  const declaredMinimum = resolveVoltageTier(effectiveRecipe.minimumTier, powerTier);
+  if (getVoltageTierIndex(declaredMinimum) > getVoltageTierIndex(powerTier) && getVoltageTierIndex(tier) < getVoltageTierIndex(declaredMinimum)) {
+    return "over-tier";
+  }
+  if (isMultiblock) {
+    if (poolEuT <= 0 && singleDrawEuT > 0) {
+      return "under-powered";
+    }
+    if (rawEuT > getVoltageTierMaxEuT(tier) * 4 ** maxInputTierSkips(effectiveRecipe.machineType)) {
+      return "over-tier";
+    }
+    if (singleDrawEuT > poolEuT) {
+      return "under-powered";
+    }
+    return "ok";
+  }
+  if (singleDrawEuT > poolEuT) {
+    return "over-tier";
+  }
+  return "ok";
+}
+function getNodeSteamReport(recipe, node) {
+  if (!recipe.machineType) {
+    return void 0;
+  }
+  const handler = getSelectedMachineHandler(recipe, node);
+  if (!isSteamMachineHandler(handler)) {
+    return void 0;
+  }
+  const baseEut = Math.abs(recipe.eut) > 0 ? Math.abs(recipe.eut) : isSmeltingRecipeMap(recipe) ? GT_FURNACE_RECIPE_EUT : 0;
+  if (!(baseEut > 0) || recipe.durationTicks <= 0) {
+    return void 0;
+  }
+  const effectiveRecipe = applyMachineHandlerToRecipe(recipe, node);
+  if (effectiveRecipe.machineProfile?.kind === "multiblock") {
+    const pressureTier = buildMachineContext(effectiveRecipe, node).tier(STEAM_PRESSURE) + 1;
+    const parallels = getMachineParallelMultiplier(effectiveRecipe, node);
+    const single2 = baseEut * 1.25 * pressureTier;
+    return {
+      drawSteamPerTick: Math.ceil(single2 * parallels),
+      singleDrawSteamPerTick: single2,
+      parallels,
+      isMultiblock: true,
+      highPressure: pressureTier === 2
+    };
+  }
+  const highPressure = isHighPressureSteamHandler(handler);
+  const single = baseEut * (highPressure ? 2 : 1) * 2;
+  return {
+    drawSteamPerTick: Math.ceil(single),
+    singleDrawSteamPerTick: single,
+    parallels: 1,
+    isMultiblock: false,
+    highPressure
+  };
+}
+function isPowerStalled(report) {
+  return report.state !== "ok";
+}
+function describePowerStall(report) {
+  if (report.recipeGateReason) return report.recipeGateReason;
+  if (report.state === "under-powered") {
+    if (report.typedBudget) {
+      return `Needs ${report.singleDrawEuT} EU/t. Supplied ${formatBudget(report.poolEuT)}.`;
+    }
+    const supply = report.hatchTypeLabel ? `the ${report.tier} ${report.hatchTypeLabel} supplies` : `${report.hatches}x ${report.tier} ${report.hatches === 1 ? "hatch supplies" : "hatches supply"}`;
+    return `Underpowered: the recipe draws ${report.singleDrawEuT} EU/t but ${supply} ${report.poolEuT} EU/t. Add amperage or raise the tier.`;
+  }
+  if (report.state === "over-tier") {
+    return `Won't run at ${report.tier}: this recipe needs at least ${report.minimumTier}${report.isMultiblock ? " hatches (amps cannot skip more than one tier)" : ""}.`;
+  }
+  return void 0;
+}
+function formatBudget(euT) {
+  return Number.isInteger(euT) ? String(euT) : euT.toFixed(1);
+}
 export {
   PROJECT_SCHEMA_VERSION,
   TICKS_PER_SECOND,
   applyMachineHandlerToRecipe,
   canonicalizeResourceHandleId,
+  describePowerStall,
   getChanceMultiplier,
   getMachineBehaviour,
   getMachineHiddenControlIds,
   getMachineOutputMultiplier,
   getMachineParallelMultiplier,
   getMachineTableControls,
+  getNodePowerAmps,
+  getNodePowerBudget,
+  getNodePowerReport,
+  getNodeRunTier,
+  getNodeSteamReport,
   getOverclockedRecipeStats,
+  getPowerPoolEuT,
   getRecipeCoilTierControl,
   getRecipeMachineConfigTierControls,
   getRecipeMachineHandlers,
   getResourceKey,
   getSelectedMachineHandler,
+  getStorageRoles,
+  getVoltageTierIndex,
+  getVoltageTierMaxEuT,
+  hasPowerReport,
+  hasStorageTarget,
+  isMultiblockRecipe,
+  isPowerStalled,
   isRecipeInputConsumed,
   machineTableNames,
   machineTableSeedsFromBase,
@@ -4395,5 +4640,6 @@ export {
   resourceMatchesInput,
   sectionHandleId,
   sectionNodeId,
-  splitSectionHandleId
+  splitSectionHandleId,
+  storageTargetMode
 };

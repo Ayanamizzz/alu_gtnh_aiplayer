@@ -1,5 +1,5 @@
 import type {
-  FactoryNode, MachineConfigControl, MachineConfigTierOption, MachineHandler,
+  FactoryNode, FactoryProject, FactoryStorage, MachineConfigControl, MachineConfigTierOption, MachineHandler,
   Recipe, RecipeOutput, ResourceAmount, ResourceKey, ResourceKind, VoltageTier,
 } from '../types/model.js';
 import type { MachineBehaviour } from '../types/machine-behaviour.js';
@@ -19,6 +19,11 @@ export interface MachineConfigTierControl {
 export function getMachineTableControls(machineType: string | undefined, recipe?: Partial<Recipe>): MachineConfigControl[];
 export function getMachineBehaviour(machineType: string | undefined): MachineBehaviour | undefined;
 export function getMachineHiddenControlIds(machineType: string | undefined): string[];
+export type StorageRole = 'source' | 'buffer' | 'product' | 'byproduct' | 'trash' | 'idle';
+export type TargetMode = 'at-least' | 'at-most' | 'exact' | 'ignore';
+export function getStorageRoles(project: FactoryProject): Map<string, StorageRole>;
+export function storageTargetMode(storage: Pick<FactoryStorage, 'targetMode' | 'poolTargetMode' | 'targetPerSecond' | 'poolSide'>, role?: StorageRole): TargetMode;
+export function hasStorageTarget(storage: FactoryStorage, role?: StorageRole): boolean;
 export function machineTableNames(): string[];
 export function machineTableSeedsFromBase(machineType: string | undefined): boolean;
 export function normalizeMachineName(name: string): string;
@@ -46,5 +51,28 @@ export function getOverclockedRecipeStats(recipe: Recipe, node: FactoryNode): {
   durationTicks: number; eut: number; tier: VoltageTier; minimumTier: VoltageTier;
   overclockSteps: number; perfectOverclockSteps: number; perfectSpeedFactor: number; perfectEuFactor: number;
 };
+export type PowerReportNode = Pick<FactoryNode, 'overclockTier' | 'coilTier' | 'machineHandlerId' | 'machineConfigTiers'> & Partial<Pick<FactoryNode, 'energyHatches' | 'energyHatchType' | 'powerEuT' | 'hatchVoltageTier' | 'hatchAmps' | 'powerInputMode'>>;
+export interface NodePowerReport {
+  state: 'ok' | 'under-powered' | 'over-tier'; recipeGateReason?: string;
+  tier: VoltageTier; minimumTier: VoltageTier; hatches: number; hatchTypeLabel?: string; hatchChip?: string;
+  typedBudget: boolean; isMultiblock: boolean; amps: number; poolEuT: number; singleDrawEuT: number;
+  parallels: number; drawEuT: number; overclockSteps: number; perfectOverclockSteps: number;
+  perfectSpeedFactor: number; perfectEuFactor: number; usage: number;
+}
+export interface NodeSteamReport {
+  drawSteamPerTick: number; singleDrawSteamPerTick: number; parallels: number; isMultiblock: boolean; highPressure: boolean;
+}
+export function getNodePowerReport(recipe: Recipe, node: PowerReportNode): NodePowerReport;
+export function getNodeSteamReport(recipe: Recipe, node: PowerReportNode): NodeSteamReport | undefined;
+export function hasPowerReport(recipe: Recipe): boolean;
+export function isPowerStalled(report: NodePowerReport): boolean;
+export function describePowerStall(report: NodePowerReport): string | undefined;
+export function getNodePowerBudget(recipe: Recipe, node: Partial<FactoryNode>): number | undefined;
+export function getNodePowerAmps(recipe: Recipe, node: Partial<FactoryNode>): number;
+export function getNodeRunTier(recipe: Recipe, node: Partial<FactoryNode>): VoltageTier;
+export function getPowerPoolEuT(recipe: Recipe, node: Partial<FactoryNode>, tier: VoltageTier): number;
+export function isMultiblockRecipe(recipe: Recipe): boolean;
+export function getVoltageTierMaxEuT(tier: VoltageTier): number;
+export function getVoltageTierIndex(tier: VoltageTier): number;
 export function getMachineParallelMultiplier(recipe: Recipe, node: FactoryNode): number;
 export function getMachineOutputMultiplier(recipe: Recipe, node: FactoryNode, output: RecipeOutput, tier: VoltageTier): number;
