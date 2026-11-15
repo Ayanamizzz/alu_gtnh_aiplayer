@@ -53,7 +53,7 @@
     "outputHashes": {
       "dist/runtime.cjs": "bcc5e162a72bcc682349db72bcad3184fa9c4706784646921ba6e908593fb8dd",
       "dist/test-support.cjs": "4a9c6810a3399c1fa88e2934eedf0b625833fdaa65e892200f34180759a00e01",
-      "dist/catalog.mjs": "f5c602f90ff4c73fca842d917e16812849ec586effa9bae0a304d5aa021813c6",
+      "dist/catalog.mjs": "3f83898c7745f8e83fdadfcbb60504b445a9f52681dd54a0ec0dc09a71456728",
       "dist/highs.wasm": "7e6432b2b26f4fab9f6d9bac55da43307c7a4b1b071cb204cb4d23e1901bc4d0",
       "types/model.d.ts": "e174e0c0321200a3004aea7d5010bf5082a4e614d9212e4109e69779df46316e",
       "types/plan-types.d.ts": "309108501828d431d0e3fa6ee0760db6e89bb0d6c8fc2e325b2f809f3298b090",

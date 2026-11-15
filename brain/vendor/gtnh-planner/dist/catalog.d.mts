@@ -20,6 +20,7 @@ export function getMachineTableControls(machineType: string | undefined, recipe?
 export function getMachineBehaviour(machineType: string | undefined): MachineBehaviour | undefined;
 export function getMachineHiddenControlIds(machineType: string | undefined): string[];
 export function machineTableNames(): string[];
+export function machineTableSeedsFromBase(machineType: string | undefined): boolean;
 export function normalizeMachineName(name: string): string;
 export function getRecipeMachineHandlers(recipe: Pick<Recipe, 'machineType' | 'minimumTier' | 'source' | 'machineHandlers'> & Partial<Recipe>): MachineHandler[];
 export function getSelectedMachineHandler(recipe: Pick<Recipe, 'machineType' | 'minimumTier' | 'source' | 'machineHandlers'> & Partial<Recipe>, node: Pick<FactoryNode, 'machineHandlerId'>): MachineHandler;
@@ -32,6 +33,8 @@ export function getResourceKey(resource: Pick<ResourceAmount, 'kind' | 'id'>): R
 export function getChanceMultiplier(recipe: Pick<Recipe, 'metadata'>, output: RecipeOutput): number;
 export function isRecipeInputConsumed(input: Pick<ResourceAmount, 'id'> & { kind?: string; consumed?: boolean }): boolean;
 export function resourceMatchesInput(output: Pick<ResourceAmount, 'kind' | 'id' | 'displayName'>, input: Pick<ResourceAmount, 'kind' | 'id' | 'displayName' | 'alternatives'>): boolean;
+export function makeResourceHandleId(side: 'input' | 'output', resource: Pick<ResourceAmount, 'kind' | 'id'>, slotIndex?: number): string;
+export function parseResourceHandleId(handleId?: string | null): { side: 'input' | 'output'; kind: ResourceKind; resourceId: string; section: number } | undefined;
 export function canonicalizeResourceHandleId(handleId?: string | null): string | undefined;
 export function sectionHandleId(section: number, handleId: string): string;
 export function splitSectionHandleId(handleId: string | undefined): { section: number; handleId: string | undefined };

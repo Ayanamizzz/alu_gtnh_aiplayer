@@ -3359,6 +3359,31 @@ function parsePortKey(key) {
   return { nodeId: key.slice(0, first), side, handle: key.slice(second + 1) };
 }
 
+// upstream/src/components/flow/resource-handles.ts
+function makeResourceHandleId(side, resource, slotIndex) {
+  return `${side}:${resource.kind}:${encodeURIComponent(resource.id)}${slotIndex === void 0 ? "" : `:${slotIndex}`}`;
+}
+function parseResourceHandleId(handleId) {
+  if (!handleId) {
+    return void 0;
+  }
+  const { section, handleId: bare } = splitSectionHandleId(handleId);
+  const [side, kind, encodedResourceId] = (bare ?? "").split(":");
+  if (side !== "input" && side !== "output" || kind !== "item" && kind !== "fluid" && kind !== "aspect" && kind !== "power" || !encodedResourceId) {
+    return void 0;
+  }
+  return {
+    side,
+    kind,
+    resourceId: decodeURIComponent(encodedResourceId),
+    section
+  };
+}
+
+// upstream/src/lib/model/types.ts
+var PROJECT_SCHEMA_VERSION = 1;
+var TICKS_PER_SECOND = 20;
+
 // upstream/src/lib/solver/power-input-rules.ts
 function hasAmperageOverclock(machine) {
   const name = (machine ?? "").toLowerCase();
@@ -4340,6 +4365,8 @@ function resolveOverclockRule(recipe, node, heatOverclockSteps) {
   return recipe.machineProfile?.perfectOverclock ? OVERCLOCK.perfect() : OVERCLOCK.normal();
 }
 export {
+  PROJECT_SCHEMA_VERSION,
+  TICKS_PER_SECOND,
   applyMachineHandlerToRecipe,
   canonicalizeResourceHandleId,
   getChanceMultiplier,
@@ -4356,10 +4383,13 @@ export {
   getSelectedMachineHandler,
   isRecipeInputConsumed,
   machineTableNames,
+  machineTableSeedsFromBase,
   makePortKey,
+  makeResourceHandleId,
   makeResourceKey,
   normalizeMachineName,
   parsePortKey,
+  parseResourceHandleId,
   parseSectionNodeId,
   recipeMapName,
   resourceMatchesInput,
