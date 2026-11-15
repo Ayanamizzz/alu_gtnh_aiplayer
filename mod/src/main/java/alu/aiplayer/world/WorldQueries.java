@@ -29,6 +29,7 @@ import com.google.gson.JsonObject;
 import alu.aiplayer.act.Drawers;
 import alu.aiplayer.act.ItemFilter;
 import alu.aiplayer.act.Machines;
+import alu.aiplayer.act.MeNetworks;
 import alu.aiplayer.bridge.RpcException;
 import alu.aiplayer.nav.NavWorld;
 import alu.aiplayer.util.J;
@@ -547,7 +548,8 @@ public final class WorldQueries {
         if (radius > 32) throw RpcException.tooLarge("radius is limited to 32");
         List<TileEntity> found = new ArrayList<>();
         for (TileEntity te : tileEntities(w, cx - radius, cz - radius, cx + radius, cz + radius)) {
-            if (te instanceof IInventory && Math.abs(te.yCoord - cy) <= radius) found.add(te);
+            if (Math.abs(te.yCoord - cy) > radius) continue;
+            if (te instanceof IInventory || MeNetworks.isTerminalHost(te)) found.add(te);
         }
         final int fx = cx, fy = cy, fz = cz;
         Collections.sort(
@@ -561,9 +563,20 @@ public final class WorldQueries {
             if (!Drawers.isController(te)) continue;
             for (int[] b : Drawers.managed(te)) controllerOf.put(packed(b[0], b[1], b[2]), te);
         }
+        // Every terminal of one ME network shows the same things: the nearest one lists them, the others say which
+        // one that is. Told over everything found, not over the page asked for, so that the pages add up.
+        Map<Object, TileEntity> lists = new java.util.IdentityHashMap<>();
+        for (TileEntity te : found) {
+            MeNetworks.View v = MeNetworks.glance(te, MeNetworks.terminalSide(te, null));
+            if (v != null && v.online && v.network != null && !lists.containsKey(v.network)) lists.put(v.network, te);
+        }
         JsonArray list = new JsonArray();
         for (int i = Math.max(0, offset); i < found.size() && list.size() < limit; i++) {
             TileEntity te = found.get(i);
+            if (MeNetworks.isTerminalHost(te)) {
+                list.add(describeTerminal(te, kinds, lists));
+                continue;
+            }
             JsonObject c = describeContainer(w, te, kinds);
             TileEntity controller = controllerOf.get(packed(te.xCoord, te.yCoord, te.zCoord));
             if (controller != null) c.add("controller", J.pos(controller.xCoord, controller.yCoord, controller.zCoord));
@@ -668,13 +681,25 @@ public final class WorldQueries {
         List<List<Object[]>> places = new ArrayList<>();
         for (int i = 0; i < n; i++) places.add(new ArrayList<Object[]>());
         int looked = 0;
+        // An ME network is looked into once, at the terminal of it nearest to the centre.
+        Map<Object, Object[]> terminals = new java.util.IdentityHashMap<>();
         for (TileEntity te : tileEntities(w, cx - radius, cz - radius, cx + radius, cz + radius)) {
-            if (!(te instanceof IInventory) || Math.abs(te.yCoord - cy) > radius) continue;
+            if (Math.abs(te.yCoord - cy) > radius) continue;
+            int side = MeNetworks.terminalSide(te, null);
+            if (side >= 0) {
+                MeNetworks.View v = MeNetworks.glance(te, side);
+                if (v == null || !v.online || v.network == null) continue;
+                long d = dist2(new int[] { te.xCoord, te.yCoord, te.zCoord }, cx, cy, cz);
+                Object[] best = terminals.get(v.network);
+                if (best == null || d < (Long) best[1]) terminals.put(v.network, new Object[] { te, d, side });
+                continue;
+            }
+            if (!(te instanceof IInventory)) continue;
             // A drawer controller shows what the drawers behind it hold; counting it would count them twice.
             if (Names.blockId(te.getBlockType())
                 .startsWith("StorageDrawers:controller")) continue;
             looked++;
-            int[] found = new int[n];
+            long[] found = new long[n];
             List<Map<String, JsonObject>> kinds = new ArrayList<>();
             for (int i = 0; i < n; i++) kinds.add(new LinkedHashMap<String, JsonObject>());
             try {
@@ -716,7 +741,7 @@ public final class WorldQueries {
             // What the covers on its faces hold: a separate place each, reached from that face.
             for (Machines.Cover cover : Machines.covers(te)) {
                 if (cover.holds == null) continue;
-                int[] inCover = new int[n];
+                long[] inCover = new long[n];
                 List<Map<String, JsonObject>> coverKinds = new ArrayList<>();
                 for (int i = 0; i < n; i++) coverKinds.add(new LinkedHashMap<String, JsonObject>());
                 for (ItemStack st : cover.holds) {
@@ -737,6 +762,30 @@ public final class WorldQueries {
                 }
             }
         }
+        for (Object[] terminal : terminals.values()) {
+            TileEntity te = (TileEntity) terminal[0];
+            MeNetworks.View v = MeNetworks.view(te, (Integer) terminal[2]);
+            if (v == null || !v.online) continue;
+            looked++;
+            long[] found = new long[n];
+            List<Map<String, JsonObject>> kinds = new ArrayList<>();
+            for (int i = 0; i < n; i++) kinds.add(new LinkedHashMap<String, JsonObject>());
+            for (MeNetworks.Stored st : v.stored) {
+                for (int i = 0; i < n; i++) {
+                    if (wanted.get(i)
+                        .matches(st.prototype)) {
+                        found[i] += st.count;
+                        tallyKind(kinds.get(i), st.prototype, st.count);
+                    }
+                }
+            }
+            for (int i = 0; i < n; i++) {
+                if (found[i] <= 0) continue;
+                totals[i] += found[i];
+                places.get(i)
+                    .add(new Object[] { te, found[i], kinds.get(i), v });
+            }
+        }
         JsonArray items = new JsonArray();
         for (int i = 0; i < n; i++) {
             Sought want = wanted.get(i);
@@ -750,7 +799,7 @@ public final class WorldQueries {
             }
             o.addProperty("total", totals[i]);
             List<Object[]> at = places.get(i);
-            Collections.sort(at, (a, b) -> (Integer) b[1] - (Integer) a[1]);
+            Collections.sort(at, (a, b) -> Long.compare((Long) b[1], (Long) a[1]));
             JsonArray where = new JsonArray();
             for (Object[] pl : at) {
                 if (where.size() >= 6) break;
@@ -759,14 +808,21 @@ public final class WorldQueries {
                 String machine = Machines.name(te);
                 c.addProperty("container", machine != null ? machine : blockName(te.getBlockType(), te.getBlockMetadata()));
                 if (Drawers.is(te)) c.addProperty("kind", "drawers");
-                if (pl.length > 3) {
+                if (pl.length > 3 && pl[3] instanceof MeNetworks.View) {
+                    // In the ME network that terminal belongs to: taken through the terminal, by its position.
+                    MeNetworks.View v = (MeNetworks.View) pl[3];
+                    c.addProperty("container", v.name);
+                    c.addProperty("kind", "me_terminal");
+                    c.addProperty("side", SIDE_NAMES[v.side]);
+                    if (v.networkId != null) c.addProperty("network", v.networkId);
+                } else if (pl.length > 3) {
                     // Inside a cover on one face of that block: sneak and right-click the face to open it.
                     Machines.Cover cover = (Machines.Cover) pl[3];
                     c.addProperty("kind", "cover");
                     c.addProperty("cover", Names.displayName(cover.item));
                     c.addProperty("side", Machines.SIDES[cover.side]);
                 }
-                c.addProperty("count", (Integer) pl[1]);
+                c.addProperty("count", (Long) pl[1]);
                 if (want.open()) {
                     // Which exact items these are, so they can be asked for by id and meta.
                     JsonArray exact = new JsonArray();
@@ -787,17 +843,17 @@ public final class WorldQueries {
         return out;
     }
 
-    private static void tallyKind(Map<String, JsonObject> into, ItemStack s, int count) {
+    private static void tallyKind(Map<String, JsonObject> into, ItemStack s, long count) {
         String key = Names.itemId(s.getItem()) + "@" + Names.meta(s);
         JsonObject k = into.get(key);
-        int had = 0;
+        long had = 0;
         if (k == null) {
             k = Names.describe(s);
             k.remove("durability");
             into.put(key, k);
         } else {
             had = k.get("count")
-                .getAsInt();
+                .getAsLong();
         }
         k.addProperty("count", had + count);
     }
@@ -841,6 +897,58 @@ public final class WorldQueries {
             if (s != null && s.stackSize > 0) used++;
         }
         return used;
+    }
+
+    /**
+     * A terminal of an ME network (Applied Energistics), given as a container: what its network stores, merged per
+     * item with real counts, the way a drawer's are. {@code lists} says, for each network, which terminal of it
+     * carries the list; the others name that one in sameNetworkAs and list nothing, so nothing is counted twice.
+     */
+    private static JsonObject describeTerminal(TileEntity te, int kinds, Map<Object, TileEntity> lists) {
+        JsonObject c = J.pos(te.xCoord, te.yCoord, te.zCoord);
+        c.addProperty("id", Names.blockId(te.getBlockType()));
+        int side = MeNetworks.terminalSide(te, null);
+        MeNetworks.View glance = MeNetworks.glance(te, side);
+        c.addProperty("name", glance == null ? "ME Terminal" : glance.name);
+        c.addProperty("kind", "me_terminal");
+        c.addProperty("side", SIDE_NAMES[side]);
+        JsonArray items = new JsonArray();
+        c.add("items", items);
+        if (glance == null || !glance.online) {
+            // Dark: no power or no channel. A player sees nothing in it either.
+            c.addProperty("online", false);
+            return c;
+        }
+        c.addProperty("online", true);
+        if (glance.networkId != null) c.addProperty("network", glance.networkId);
+        TileEntity first = lists.get(glance.network);
+        if (first != null && first != te) {
+            c.add("sameNetworkAs", J.pos(first.xCoord, first.yCoord, first.zCoord));
+            return c;
+        }
+        MeNetworks.View v = MeNetworks.view(te, side);
+        if (v == null) {
+            c.addProperty("unreadable", true);
+            return c;
+        }
+        Map<String, JsonObject> merged = new LinkedHashMap<>();
+        for (MeNetworks.Stored st : v.stored) tallyKind(merged, st.prototype, st.count);
+        // Most first, so that a list cut short keeps what there is most of.
+        List<JsonObject> sorted = new ArrayList<>(merged.values());
+        Collections.sort(
+            sorted,
+            (a, b) -> Long.compare(
+                b.get("count")
+                    .getAsLong(),
+                a.get("count")
+                    .getAsLong()));
+        for (JsonObject item : sorted) {
+            if (items.size() >= kinds) break;
+            items.add(item);
+        }
+        c.addProperty("kinds", merged.size());
+        if (merged.size() > items.size()) c.addProperty("moreKinds", merged.size() - items.size());
+        return c;
     }
 
     /** {@code kinds}: how many different items are listed at most; what is left out is counted in moreKinds. */

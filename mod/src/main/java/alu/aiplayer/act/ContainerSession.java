@@ -28,6 +28,8 @@ import alu.aiplayer.bot.Motion;
  * emptied through its item-handling interface, the way a hopper would. So are GregTech's processing machines once
  * their screen has opened for the bot: what goes in lands in the input slots and what is taken comes from the
  * output slots, as it would by hand, since their screens are not built from the slots this code can click.
+ * An Applied Energistics terminal is used through its screen too, but what its network stores is a list, not slots:
+ * entries of the list are clicked as {@link MeNetworks} says.
  */
 public final class ContainerSession {
 
@@ -66,10 +68,13 @@ public final class ContainerSession {
     private DepositPlan deposit;
     private List<ItemFilter> withdraw;
     private int[] withdrawLeft;
-    private int phase; // 0 open, 1 wait for screen, 2 screen transfers, 3 direct transfers, 4 closing, 5 drawers
+    private int phase; // 0 open, 1 wait for screen, 2 screen transfers, 3 direct transfers, 4 closing, 5 drawers,
+                       // 6 an ME terminal's list
     private int interval = CLICK_INTERVAL;
     private final Set<ItemStack> unplaceable = Collections.newSetFromMap(new IdentityHashMap<ItemStack, Boolean>());
     private final Set<Integer> deadDrawers = new HashSet<>();
+    /** Kinds an ME terminal listed but did not give (the network's security, or gone meanwhile). */
+    private final Set<String> deadKinds = new HashSet<>();
     /** Set after a click put a stack into a drawer when the rest of that kind may follow with a second click. */
     private ItemStack dumpType;
     private float[] dumpHit;
@@ -94,6 +99,10 @@ public final class ContainerSession {
     public int smallestPickup, wantedPickup;
     /** A drawer clicks the held stack, so a partial stack needs somewhere to put the surplus first. */
     public boolean splitSpaceRequired;
+    /** True when the screen used was an ME terminal's: what was moved went into or came out of its network. */
+    public boolean meNetwork;
+    /** True when an ME terminal listed something wanted and a click on it gave nothing. */
+    public boolean networkRefused;
     private boolean requireProcessingSlots;
 
     /** A bus-less controller may only be loaded through a real input/output screen, not a special-item slot. */
@@ -196,6 +205,11 @@ public final class ContainerSession {
             case 0: {
                 if (!w.blockExists(x, y, z)) return fail("out_of_reach", "the container is out of reach");
                 TileEntity te = w.getTileEntity(x, y, z);
+                if (!viaFace()) {
+                    // A terminal is a part on one face of a cable: its screen opens by a click on that face.
+                    int terminal = MeNetworks.terminalSide(te, p);
+                    if (terminal >= 0) openSide = terminal;
+                }
                 if (viaFace()) {
                     // Whatever that click opens: nothing is assumed about the block.
                     if (!Reach.canReach(p, x, y, z)) return fail("out_of_reach", "the block is out of reach");
@@ -242,7 +256,17 @@ public final class ContainerSession {
                 if (bot.clickWasRefused(x, y, z)) return refused("opening the container");
                 if (p.openContainer != p.inventoryContainer) {
                     TileEntity te = w.getTileEntity(x, y, z);
-                    if (hasOwnSlots(p)) {
+                    if (MeNetworks.isTerminalScreen(p.openContainer)) {
+                        if (takeAll) {
+                            return fail("invalid", "that is an ME terminal: a whole network is not emptied through it; list the items to take");
+                        }
+                        if (!MeNetworks.screenOnline(p.openContainer)) {
+                            return fail("denied", "the ME terminal is dark: its network has no power or no channel for it; nothing was moved");
+                        }
+                        viaScreen = true;
+                        meNetwork = true;
+                        phase = 6;
+                    } else if (hasOwnSlots(p)) {
                         // The way a player uses anything: through the screen it opens. The screen itself says
                         // where things may go and what may be taken, so nothing has to be known about the block.
                         viaScreen = true;
@@ -269,6 +293,11 @@ public final class ContainerSession {
                     if (requireProcessingSlots) return fail("invalid", "the controller opened no input/output screen; nothing was put in");
                     // No screen opened although nothing refused the click: storage without one (barrels, drawers).
                     TileEntity te = w.getTileEntity(x, y, z);
+                    if (MeNetworks.isTerminalHost(te)) {
+                        // The plain terminal opens for anyone; the crafting and pattern terminals only for players
+                        // the network's security lets craft.
+                        return fail("denied", "the ME terminal did not open: its network's security does not let this player use it");
+                    }
                     if (!(te instanceof IInventory) || !((IInventory) te).isUseableByPlayer(p)) {
                         return fail("denied", "the container cannot be used from here");
                     }
@@ -298,6 +327,20 @@ public final class ContainerSession {
                 if (!directStep(p, (IInventory) te)) phase = 4;
                 return Status.WORKING;
             }
+            case 6:
+                // The server closes a terminal's screen itself when its network changes under it.
+                if (!MeNetworks.isTerminalScreen(p.openContainer)) {
+                    return fail("denied", "the ME terminal closed while it was being used");
+                }
+                if (++wait < CLICK_INTERVAL) return Status.WORKING;
+                wait = 0;
+                if (!meStep(p)) {
+                    if (failCode != null) return fail(failCode, failMessage);
+                    bot.conn()
+                        .closeWindow();
+                    phase = 4;
+                }
+                return Status.WORKING;
             case 5: {
                 TileEntity te = w.getTileEntity(x, y, z);
                 if (!Drawers.is(te)) return fail("invalid", "the container is gone");
@@ -505,6 +548,19 @@ public final class ContainerSession {
             return Status.WORKING;
         }
         if (p.openContainer != p.inventoryContainer) {
+            if (MeNetworks.isTerminalScreen(p.openContainer)) {
+                // A wireless terminal: the same list as a terminal on a cable shows.
+                if (takeAll) return fail("invalid", "that is an ME terminal: a whole network is not emptied through it; list the items to take");
+                if (!MeNetworks.screenOnline(p.openContainer)) {
+                    return fail("denied", "the wireless terminal shows no network: out of range of an access point, or out of power; nothing was moved");
+                }
+                viaScreen = true;
+                meNetwork = true;
+                phase = 6;
+                wait = 0;
+                cursor = 0;
+                return Status.WORKING;
+            }
             if (!hasOwnSlots(p)) {
                 bot.conn()
                     .closeWindow();
@@ -901,6 +957,141 @@ public final class ContainerSession {
             && a.getItem() == b.getItem()
             && a.getItemDamage() == b.getItemDamage()
             && ItemStack.areItemStackTagsEqual(a, b);
+    }
+
+    // ---- through an ME terminal ----------------------------------------------------------------------------------
+
+    /**
+     * Does one transfer at an open terminal. Returns false when there is nothing left to do.
+     * <p>
+     * Putting in: a shift-click on one of the bot's own stacks stores all of it; for part of a stack the stack is
+     * picked up, the part to keep is put back and the rest is put down on the list. Taking: a shift-click on an
+     * entry gives a stack; for less than a stack one is picked up, the wanted number is placed in the bot's slots
+     * and the rest is put back down on the list. The counts are exact either way.
+     */
+    private boolean meStep(EntityPlayerMP p) {
+        Container c = p.openContainer;
+        List<Slot> mine = new ArrayList<>();
+        for (Object o : c.inventorySlots) {
+            Slot s = (Slot) o;
+            if (!isOwn(p, s)) continue;
+            int index = s.getStack() == null ? s.getSlotIndex() : ownIndex(p, s);
+            if (index >= 0 && index < Inventories.CARRY_SLOTS) mine.add(s);
+        }
+        if (p.inventory.getItemStack() != null) {
+            failCode = "invalid";
+            failMessage = "the cursor already holds an item; clear it before transferring";
+            return false;
+        }
+        if (deposit != null) {
+            for (; cursor < mine.size(); cursor++) {
+                Slot s = mine.get(cursor);
+                ItemStack stack = s.getStack();
+                if (stack == null) continue;
+                int index = ownIndex(p, s);
+                if (index < 0) continue;
+                // The wireless terminal in the hand does not go into its own network.
+                if (opener != null && index == openerSlot) continue;
+                int want = deposit.wanted(stack);
+                if (want == 0) continue;
+                ItemStack type = stack.copy();
+                int offered = want < 0 ? stack.stackSize : Math.min(want, stack.stackSize);
+                int before = Inventories.count(p, exact(type));
+                if (offered >= stack.stackSize) {
+                    c.slotClick(s.slotNumber, 0, 1, p);
+                } else {
+                    int keep = stack.stackSize - offered;
+                    c.slotClick(s.slotNumber, 0, 0, p);
+                    if (keep <= offered) {
+                        // Right-clicks put the part to keep back one at a time; the rest goes down on the list.
+                        for (int i = 0; i < keep && p.inventory.getItemStack() != null; i++) c.slotClick(s.slotNumber, 1, 0, p);
+                        MeNetworks.click(c, p, null, MeNetworks.Click.PICK_UP_OR_PUT_DOWN);
+                    } else {
+                        // Right-clicks on the list put the wanted number in one at a time.
+                        for (int i = 0; i < offered; i++) {
+                            ItemStack hand = p.inventory.getItemStack();
+                            if (hand == null) break;
+                            int held = hand.stackSize;
+                            MeNetworks.click(c, p, null, MeNetworks.Click.SPLIT_OR_PUT_ONE);
+                            ItemStack after = p.inventory.getItemStack();
+                            if (after != null && after.stackSize >= held) break;
+                        }
+                    }
+                    // What is still on the cursor is the part to keep, or what the network had no room for.
+                    if (p.inventory.getItemStack() != null) c.slotClick(s.slotNumber, 0, 0, p);
+                    emptyCursor(p, c, mine);
+                }
+                c.detectAndSendChanges();
+                int gone = before - Inventories.count(p, exact(type));
+                if (gone > 0) {
+                    moved += gone;
+                    deposit.moved(type, gone);
+                }
+                // What stays behind did not fit. Other kinds of item might still, so carry on.
+                if (gone < offered) rejected++;
+                cursor++;
+                return true;
+            }
+            deposit = null;
+            cursor = 0;
+            containerFull = rejected > 0;
+        }
+        if (withdraw != null && !inventoryFull) {
+            for (MeNetworks.Stored kind : MeNetworks.stored(c)) {
+                String key = alu.aiplayer.util.Kinds.key(kind.prototype) + (kind.prototype.hasTagCompound() ? "#" + kind.prototype.getTagCompound()
+                    .hashCode() : "");
+                if (deadKinds.contains(key)) continue;
+                int f = matchingFilter(kind.prototype);
+                if (f < 0) continue;
+                ItemStack type = kind.prototype.copy();
+                int room = roomFor(p, type);
+                int want = (int) Math.min(withdrawLeft[f], Math.min((long) room, kind.count));
+                if (want <= 0) {
+                    inventoryFull = true;
+                    break;
+                }
+                int had = Inventories.count(p, exact(type));
+                // One click gives a stack, or all there is when that is less.
+                int stack = (int) Math.min(type.getMaxStackSize(), kind.count);
+                if (want >= stack) {
+                    MeNetworks.click(c, p, type, MeNetworks.Click.TAKE_STACK);
+                } else {
+                    MeNetworks.click(c, p, type, MeNetworks.Click.PICK_UP_OR_PUT_DOWN);
+                    placeCount(p, c, mine, want);
+                    if (p.inventory.getItemStack() != null) MeNetworks.click(c, p, null, MeNetworks.Click.PICK_UP_OR_PUT_DOWN);
+                    emptyCursor(p, c, mine);
+                }
+                c.detectAndSendChanges();
+                int got = Inventories.count(p, exact(type)) - had;
+                if (got <= 0) {
+                    // Listed but not given: the network's security lets this player look and not take, or it went
+                    // elsewhere meanwhile. Leave this kind be.
+                    deadKinds.add(key);
+                    networkRefused = true;
+                    continue;
+                }
+                moved += got;
+                received.add(type, got);
+                if (withdrawLeft[f] != Integer.MAX_VALUE) withdrawLeft[f] = Math.max(0, withdrawLeft[f] - got);
+                return true;
+            }
+            withdraw = null;
+        }
+        return deposit != null;
+    }
+
+    /**
+     * Never leaves a stack on the cursor when a screen is about to close (it would be thrown on the ground): what a
+     * network would not take back goes into the bot's own slots, and on the ground only when those are full too.
+     */
+    private static void emptyCursor(EntityPlayerMP p, Container c, List<Slot> mine) {
+        ItemStack hand = p.inventory.getItemStack();
+        if (hand == null) return;
+        placeCount(p, c, mine, hand.stackSize);
+        hand = p.inventory.getItemStack();
+        if (hand == null) return;
+        p.inventory.setItemStack(null);
+        p.dropPlayerItemWithRandomChoice(hand, false);
     }
 
     // ---- through the item-handling interface ------------------------------------------------------------------

@@ -78,7 +78,7 @@ Container：
 ```jsonc
 {
   "x":-509,"y":69,"z":90, "id":"IronChest:BlockIronChest", "name":"Compressed Chest",
-  "kind":"drawers",              // 没有：普通容器；"drawers"：抽屉；"drawer_controller"：抽屉管理器；"machine"：GregTech 机器
+  "kind":"drawers",              // 没有：普通容器；"drawers"：抽屉；"drawer_controller"：抽屉管理器；"machine"：GregTech 机器；"me_terminal"：ME 终端（见下）
   "slots":243, "usedSlots":28,
   "items":[Item…],               // 按物品合并，最多列 kinds 种（默认 60）；还有没列的时带 "moreKinds":n。要把一个大箱子看全：以它为中心、radius 0、kinds 给大
   "covers":[Cover…],             // 它各个面上的覆盖板，以及能装东西的覆盖板里装着什么；没有就不带。见“覆盖板和流体罐”
@@ -95,6 +95,20 @@ Container：
 - 抽屉（Storage Drawers）的 `count` 是抽屉里真实的数量（可以上万），`slots` 是抽屉格数。
 - 抽屉管理器自己不装东西：`items` 为空，`drawers` 是它管着几个抽屉方块，`slots`/`usedSlots` 是这些抽屉合计的格数。它管的东西用 `world.drawers` 看。
 - 带 `attached` 的箱子多半是自动化的一环（进货口、出货口），往里放的东西可能马上被抽走。
+- **ME 终端**（Applied Energistics 2，`kind:"me_terminal"`）：电缆某个面上的终端部件（终端、合成终端、样板终端）。它不是物品栏，但照容器列出来，列的是它那个 ME 网络里存着的物品：
+
+  ```jsonc
+  {"x":12,"y":64,"z":-4, "id":"appliedenergistics2:tile.BlockCableBus", "name":"ME Terminal", "kind":"me_terminal",
+   "side":"south",                 // 终端在这个方块的哪个面上；一个方块几个面都有终端时给的是侧面的那个
+   "online":true,                  // false：黑的（网络没电、这个终端没有频道、还没并进网络），items 是空的，不代表网络是空的
+   "network":"0:10,64,0",          // 哪个网络（维度:网络里一个方块的位置）。同一个网络的终端这一项相同；网络变了形状它会变，只用来在一批结果里认同一个网络
+   "kinds":812,                    // 网络里存着多少种物品（按 id、meta 合并以后）
+   "items":[Item…],                // 数量多的在前，真实数量（可以上亿），最多 kinds 参数那么多种，没列的在 moreKinds
+   "sameNetworkAs":{"x":10,"y":64,"z":-4}   // 这个网络的东西已经列在那个位置的终端上了：这里 items 是空的。范围里同一个网络只有离中心最近的终端带着 items，
+  }                                         // 翻页不影响这一点（按范围里的全部终端定，不按这一页），所以把各页的 items 加起来不会把一个网络算两遍
+  ```
+
+  没有 `slots`、`usedSlots`、`attached`、`covers`。只列存着的；网络能合成的、正在合成的不算。流体不列。ME 驱动器、ME 箱子、ME 接口是普通物品栏，照普通容器列（驱动器里是存储元件本身）。没装这个 mod、或者它的版本和身体编译时对的不一样（GTNH 2.9.0 的 rv3-beta-1095）时，终端不被认出来，别的照常。
 
 **界面上的控件**（`screen.look` 等结果里的 `controls`，没有就不带）。界面上除了格子，还有开关、数字、选项、能再打开的面板（页签）、流体格、按钮。用 ModularUI 2 做的界面（GregTech 的单方块机器、覆盖板等），服务端给玩家能改的每一样东西都留着一个有名字的处理器；这里把它们原样列出来，并照玩家的客户端那样去操作。**名字是界面自己起的**（`fluidAutoOutput`、`cover_panel_west`、`powerSwitch`……），身体不知道任何一个界面是干什么的。别的做法的界面没有这一项，只能点格子。
 
@@ -202,7 +216,7 @@ PlayerView（`world.player` 的结果，也是 `chat`、`whisper` 事件里的 `
 }
 ```
 
-`kind` 是 `container`、`drawers`、`drawer_controller`、`machine`，都不是就不带。人说“这个”“我面前的”时，先看 `lookingAt`，再看 `ahead`。
+`kind` 是 `container`、`drawers`、`drawer_controller`、`machine`、`me_terminal`（ME 终端所在的电缆），都不是就不带。人说“这个”“我面前的”时，先看 `lookingAt`，再看 `ahead`。
 
 `world.scan` 结果：
 
@@ -337,7 +351,7 @@ Worn：穿在盔甲格以外的一件东西。有的 mod 把玩家穿的东西�
 | `recipe.find` | `{id, meta?=0, bot?, crafting?=4, machines?=8, machine?}` | 这个物品怎么做，见下。`machine` 给了就只列名字里含它的机器的配方 |
 | `world.machines` | `{radius?=32(≤64), name?, limit?=30(≤60)}` + 中心 | 附近的 GregTech 加工机器（单方块的，和多方块机器的主机），由近到远：`{machines:[{x,y,z,name,id,meta,recipes,tier,inputSlots,outputSlots,active,progress?,maxProgress?,storedEU,inputVoltage,switchedOff?,autoOutput?,dist}], total}`。`autoOutput` 是单方块机器界面上的自动输出开着时（两个开关都关着不带）：`{items, fluids, side?, to?:{x,y,z,name}, outputFaceIsFront?}`，开着的那几样做出来就从输出面 `side` 推给挨着的 `to`，不留在产物格；`outputFaceIsFront` 时输出面就是它的正面，什么都推不出去。`recipes` 是它跑哪种配方，`recipeKey` 是这种配方在配方册里的页（`handlers.json` 的 `key`），`circuit` 是它现在设的编程电路（没设不带）（和 `recipe.find` 里的 `machine` 同名，如 `Lathe`）；`id`+`meta` 是这台机器作为物品时的那一对，和配方册 `handlers.json` 里每个配方页的 `machines` 可以直接比对；`storedEU` 为 0 就是没电；`name` 给了就只列名字或 `recipes` 里含它的 |
 | `recipe.overclock` | `{eut,ticks,recipeKey,machine?:{x,y,z},tier?,bot?,dim?}`（machine/tier 二选一） | 只读安装 GT 的 NEI 超频预测，见下 |
-| `world.stock` | `{items:[{id,meta?} \| {ore}], radius?=32(≤64)}` + 中心 | 这些东西存在哪：`{items:[{id,meta?\|ore, total, places:[{x,y,z,container,kind?,cover?,side?,count,items?}], morePlaces?}], containersLookedInto}`。查的是半径内已加载区块里的所有箱子、抽屉（真实数量）和其他带物品栏的方块；每样最多列 6 处，数量多的在前。按矿辞名或不带 meta 查时，每处带 `items`：具体是哪几种（id、meta、名字、数量），可以直接拿去 `withdraw` |
+| `world.stock` | `{items:[{id,meta?} \| {ore}], radius?=32(≤64)}` + 中心 | 这些东西存在哪：`{items:[{id,meta?\|ore, total, places:[{x,y,z,container,kind?,cover?,side?,network?,count,items?}], morePlaces?}], containersLookedInto}`。查的是半径内已加载区块里的所有箱子、抽屉（真实数量）和其他带物品栏的方块，以及亮着的 ME 终端后面的网络（一个网络只算一遍，记在离中心最近的那个终端上：`kind:"me_terminal"`，`side` 是终端在哪个面，`network` 同 `world.containers`；`containersLookedInto` 里一个网络算一个）；每样最多列 6 处，数量多的在前。按矿辞名或不带 meta 查时，每处带 `items`：具体是哪几种（id、meta、名字、数量），可以直接拿去 `withdraw` |
 
 新增 `recipe.tradeRules {id,meta?=0}`：从安装的售货机 `TradeDatabase` 只读匹配商品的原生静态规则，返回 `{source,scope,trades:[{group,cooldownSeconds,maxTrades,products,inputs,nonConsumedItems,currency,requirements}],unavailable?}`。冷却是现实秒，maxTrades=-1表示无总次数限制；币值是原生货币单位，不一定是高面额硬币个数。requirements中BQ条件另带精确字符串questId。它不查询当前玩家资格、钱包、剩余额度或当前冷却，也不执行交易。大脑把该handler的NEI other解释为商品，find_uses的机器/catalyst用途独立放在data.performedBy，原料用途筛选/分页不变。
 
@@ -641,6 +655,7 @@ Slot：`{slot, own?, item?:Item, x?, y?, class?, takesNothing?, takes?, accepts?
 - **`flatten` 的填充材料**按 `fillItems`（默认是配置的 `fillerBlocks`）的顺序，用背包里有的第一种；挖出来的泥土、圆石会被捡回来用上。坑比 `maxFillDepth` 深的列不填，记入 skipped。
 - **箱子**：空手右键打开箱子界面，用 shift 点击转移。点击被领地保护之类拒绝时以 `denied` 失败。
   点击没被拒绝却没有界面的储物方块（桶）按漏斗的方式存取。
+- **ME 终端**（Applied Energistics 2）：`deposit` / `withdraw` 的 `container` 给终端所在的方块（电缆）。不用给 `side`：身体认出终端在哪个面，走到那一面前面，右键那个面打开终端（给了 `side` 就点给的那个面）。终端里网络的东西是一张列表，不是格子：客户端点列表里的一项时发给服务器的是“这种东西、怎么点的”，身体直接做服务器收到这条消息时做的事，所以网络自己的规则（耗电、安全权限、一下拿多少）都照旧。取：够一组的 Shift+左键一组进背包；不足一组的左键拿起一组、在自己格子里放下要的个数、剩下的左键放回列表。存：整组的在自己格子上 Shift+左键；只存一部分的拿起这一组、留下的右键一个个放回原格、其余左键放到列表上（要存的更少时反过来，右键一个个放到列表上）。数量精确到个。结果同普通容器：网络里不够是 `done` 带 `missing`，背包满是 `inventory_full`，网络存不下是 `container_full`（没进去的还在身上）。终端是黑的（没电、没频道）以 `denied` 失败并写明，什么都不动。网络有安全终端而这个玩家没权限时：合成终端、样板终端右键后不打开，以 `denied` 失败；普通终端打得开、列得出，但点了不给，一样都没取到时 `withdraw` 以 `denied` 失败，`deposit` 以 `container_full` 失败（消息写明可能是存不下、也可能是没权限）。`haul` 不给 `items`（搬空来源）时来源是终端以 `invalid` 失败：一个网络不这样搬空。还没做的：流体、下单合成；无线终端走 `container:{item:{…}}` 的写法身体认得出它的界面，但没有实测过；有安全终端时的权限也没有实测过（验证范围见 `docs/QA_AE2_TERMINAL.md`）。
 - **抽屉**（Storage Drawers）按玩家的方式用：站到正面，左键拍出一组或一个，右键把手里的东西放进去；数量精确。身上某一种东西要全部放进去、又不止一组时，放完第一组马上再点一下（双击），剩下的同类一次全进去；只放一部分时仍是一组一组放。
   `deposit`/`withdraw`/`haul`/`supply`/`dropoff` 的箱子位置都可以是抽屉。封箱的抽屉、被保护的抽屉以 `denied` 失败。
   往抽屉里放：已经装着同一种的那格优先，其次是还没指定物品的空格；都没有就算放不下。

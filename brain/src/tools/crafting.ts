@@ -173,9 +173,17 @@ export const findInStorage: Tool = {
         items: wanted.map((q, n) => {
           // 同一个方块自己的格子和它各个面上的覆盖板是不同的存放点
           const places = new Map<string, NonNullable<NonNullable<StockResult['items']>[number]['places']>[number]>()
-          for (const a of answers) for (const place of a.items?.[n]?.places ?? []) places.set(`${place.x},${place.y},${place.z},${place.kind === 'cover' ? (place.side ?? '') : ''}`, place)
+          // 一个 ME 网络的终端可以分在好几块里：每块都把这个网络算了一遍，这里只留一处，多算的从合计里减掉
+          let twice = 0
+          for (const a of answers) {
+            for (const place of a.items?.[n]?.places ?? []) {
+              const key = place.kind === 'me_terminal' && typeof place.network === 'string' ? `me:${place.network}` : `${place.x},${place.y},${place.z},${place.kind === 'cover' ? (place.side ?? '') : ''}`
+              if (key.startsWith('me:') && places.has(key)) twice += place.count
+              else places.set(key, place)
+            }
+          }
           const listed = [...places.values()].sort((x, y) => y.count - x.count)
-          const total = answers.reduce((sum, a) => sum + (a.items?.[n]?.total ?? 0), 0)
+          const total = answers.reduce((sum, a) => sum + (a.items?.[n]?.total ?? 0), 0) - twice
           // 每一块最多列几处：没列出来的照实带上
           const more = answers.reduce((sum, a) => sum + (a.items?.[n]?.morePlaces ?? 0), 0)
           return { ...q, total: Math.max(total, listed.reduce((sum, p) => sum + p.count, 0)), places: listed, ...(more > 0 ? { morePlaces: more } : {}) }

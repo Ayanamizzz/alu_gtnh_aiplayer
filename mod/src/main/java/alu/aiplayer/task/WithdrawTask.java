@@ -57,6 +57,7 @@ public final class WithdrawTask extends Task {
             if (trip.session.inventoryFull) fail("inventory_full", "not enough inventory capacity for the requested items or this slot's native pickup; missing lists what was not collected");
             else if (trip.session.pickupLimited) fail("invalid", "the output slot cannot accept a surplus back: its smallest native pickup is "
                 + trip.session.smallestPickup + " but only " + trip.session.wantedPickup + " more were requested; that stack was left untouched");
+            else if (trip.session.networkRefused && trip.session.moved == 0) fail("denied", "the ME terminal lists the items but gave none of them: its network's security does not let this player take things out");
             else done();
         }
     }

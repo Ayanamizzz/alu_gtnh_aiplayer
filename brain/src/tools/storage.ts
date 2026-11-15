@@ -5,6 +5,8 @@
 // 每个容器里的东西向身体要全（kinds 给到上限）：程序拿到的 data 是全的，存货总表也是全的；给模型看的文字一个容器只列前
 // KINDS_PER_LINE 种，并写明怎么把一个容器看全（radius 0）。
 // 带 attached 的容器（旁边接着漏斗、管道）是主人自动化的一环，结果里标出来。
+// ME 终端（kind "me_terminal"）当一个容器列：它的 items 是它那个 ME 网络里存着的东西。同一个网络的几个终端只有一个带着 items
+// （身体在一次查询里已经这样给；切成几块查时这里再按 network 合一遍），所以存货总表不会把一个网络算两遍。
 
 import type { ContainerInfo, DrawerSlot } from '../bridge/protocol.ts'
 import { COVER_NOTE, formatContainer, formatPos, holdsCoverItems, itemKey, mergeItems, nameOf } from './format.ts'
@@ -30,7 +32,28 @@ export const CONTAINER_KINDS_ALL = 2000
 export const KINDS_PER_LINE = 30
 
 /** 身体没列全的容器（老的身体不认 kinds，一个容器最多给 60 种）。 */
-const cutByServer = (c: ContainerInfo): boolean => (c.moreKinds ?? 0) > 0
+const cutByServer = (c: ContainerInfo): boolean => (c.moreKinds ?? 0) > 0 && c.kind !== 'me_terminal'
+/** 种数比身体一次给得了的还多的 ME 网络（身体给的是数量最多的那些）。 */
+const hugeNetwork = (c: ContainerInfo): boolean => (c.moreKinds ?? 0) > 0 && c.kind === 'me_terminal'
+const HUGE_NETWORK_NOTE = `An ME network holding more than ${2000} kinds is listed only as far as that, most first: find_in_storage still finds any particular item in it.`
+
+/**
+ * 同一个 ME 网络的终端只留一个带着东西的：照给的顺序（由近到远）第一个带 items 的留着，后面同网络的清掉 items、指到它。
+ * 身体在一次查询里已经这样做；这里管的是切成几块各查一次以后合起来的情形。
+ */
+export function oneListPerNetwork(containers: ContainerInfo[]): ContainerInfo[] {
+  const first = new Map<string, ContainerInfo>()
+  return containers.map((c) => {
+    if (c.kind !== 'me_terminal' || typeof c.network !== 'string' || c.online === false || c.sameNetworkAs) return c
+    const lister = first.get(c.network)
+    if (!lister) {
+      first.set(c.network, c)
+      return c
+    }
+    const { moreKinds: _more, kinds: _kinds, ...rest } = c
+    return { ...rest, items: [], sameNetworkAs: { x: lister.x, y: lister.y, z: lister.z } }
+  })
+}
 
 function pages(total: number, size: number): number {
   return Math.max(1, Math.ceil(total / size))
@@ -38,7 +61,7 @@ function pages(total: number, size: number): number {
 
 export const listContainers: Tool = {
   name: 'list_containers',
-  description: `Containers around you or around "at", nearest first, a page at a time: position, name, kind (chest, [drawers], [drawer controller], [machine]), slots used and contents merged per item (the first ${KINDS_PER_LINE} kinds of each; radius 0 lists one container whole). Drawer counts are what is really stored. "AUTOMATED" marks a container with a hopper or pipe attached: part of your owner's automation.`,
+  description: `Containers around you or around "at", nearest first, a page at a time: position, name, kind (chest, [drawers], [drawer controller], [machine], [ME terminal]), slots used and contents merged per item (the first ${KINDS_PER_LINE} kinds of each; radius 0 lists one container whole). Drawer and ME network counts are what is really stored. "AUTOMATED" marks a container with a hopper or pipe attached: part of your owner's automation.`,
   inputSchema: obj({
     radius: int(`Search radius in blocks (default 16, up to ${BASE_RADIUS}: a whole base). 0: only the container at "at", with everything in it.`, { min: 0, max: BASE_RADIUS }),
     page: int(`Page (${CONTAINERS_PER_PAGE} containers per page, default 1).`, { min: 1 }),
@@ -64,6 +87,7 @@ export const listContainers: Tool = {
       if (total > containers.length) notes.push(`Only ${containers.length} of the ${total} containers there were read (at most ${STOCK_MAX_CONTAINERS} at a time): give a smaller radius or "at" to see the others.`)
       if (paged.some((c) => mergeItems(c.items ?? []).length > KINDS_PER_LINE || cutByServer(c))) notes.push('Where a line ends in "… more kinds", the rest is not shown here: list_containers with "at" that container and radius 0 lists everything in it (in a program, r.data.containers has every kind).')
       if (paged.some(holdsCoverItems)) notes.push(COVER_NOTE)
+      if (paged.some(hugeNetwork)) notes.push(HUGE_NETWORK_NOTE)
       return { content: [`Within ${radius} blocks of ${of} (${looked}): ${range}.`, ...lines, ...notes].join('\n'), data: { total, offset, containers: paged }, keepWhole: true }
     }
     const from = await lookFrom(ctx, input.at)
@@ -88,6 +112,7 @@ export const listContainers: Tool = {
     if (paged.some(holdsCoverItems)) notes.push(COVER_NOTE)
     const old = paged.filter(cutByServer).length
     if (whole && old > 0) notes.push('The game server did not list all of it (its mod is too old to list more than 60 kinds of a container). find_in_storage still finds a particular item in it.')
+    if (paged.some(hugeNetwork)) notes.push(HUGE_NETWORK_NOTE)
     return { content: [`Within ${radius} blocks of ${from.of}: ${range}.`, ...lines, ...notes].join('\n'), data: { total, offset, containers: paged }, keepWhole: true }
   },
 }
@@ -187,7 +212,7 @@ async function containersInPieces(
   const seen = new Map<string, ContainerInfo>()
   for (const a of answers) for (const c of a.containers) seen.set(`${c.x},${c.y},${c.z}`, c)
   const d = (c: ContainerInfo): number => Math.hypot(c.x - where.spot.x, c.y - where.spot.y, c.z - where.spot.z)
-  const containers = [...seen.values()].sort((a, b) => d(a) - d(b))
+  const containers = oneListPerNetwork([...seen.values()].sort((a, b) => d(a) - d(b)))
   const total = Math.max(containers.length, answers.reduce((n, a) => n + a.total, 0))
   return { containers, total, of: where.of, looked: `looked ${piecesText(cut, Date.now() - started)}`, pieces: cut }
 }
@@ -195,7 +220,7 @@ async function containersInPieces(
 export const listStock: Tool = {
   name: 'list_stock',
   brief: '{radius?, contains?, below?, at?}: everything stored around -> items[{id, meta, count, places}]',
-  description: `Everything stored around you, or around a place you give ("at"), as one table: each item with its total and where most of it is, summed over all chests and drawers within the radius, most first. Filter with "contains" (a word of the name or id) and "below" (items you have fewer than that of). Machines and drawer controllers are not counted; what sits in automated containers is marked.`,
+  description: `Everything stored around you, or around a place you give ("at"), as one table: each item with its total and where most of it is, summed over all chests, drawers and ME networks (through a terminal) within the radius, most first. Filter with "contains" (a word of the name or id) and "below" (items you have fewer than that of). Machines and drawer controllers are not counted; what sits in automated containers is marked.`,
   inputSchema: obj({
     radius: int(`Search radius in blocks (default 16, up to ${BASE_RADIUS}: a whole base).`, { min: 1, max: BASE_RADIUS }),
     contains: str('Only items whose name or id contains this.', { maxLength: 60 }),
@@ -226,6 +251,7 @@ export const listStock: Tool = {
     const storage = containers.filter((c) => c.kind !== 'machine' && c.kind !== 'drawer_controller')
     const merged = new Map<string, StockLine>()
     let truncated = 0
+    let huge = 0
     const put = (it: { id?: string; meta?: number; name?: string; count?: number }, place: Omit<StockLine['places'][number], 'count'>, automated: boolean): void => {
       if (!it || typeof it.id !== 'string') return
       const key = itemKey({ id: it.id, meta: it.meta ?? 0 })
@@ -238,6 +264,7 @@ export const listStock: Tool = {
     }
     for (const c of storage) {
       if (cutByServer(c)) truncated++
+      if (hugeNetwork(c)) huge++
       const automated = (c.attached?.length ?? 0) > 0
       for (const it of c.items ?? []) put(it, { x: c.x, y: c.y, z: c.z, ...(c.kind ? { kind: c.kind } : {}) }, automated)
     }
@@ -256,8 +283,16 @@ export const listStock: Tool = {
     if (word) list = list.filter((l) => `${nameOf(l) ?? ''}\n${l.name ?? ''}\n${itemKey(l)}`.toLowerCase().includes(word))
     if (i.below !== undefined) list = list.filter((l) => l.count < i.below!)
     const skipped = containers.length - storage.length
+    // ME 网络：一个网络算一处（带着东西的那个终端）；黑着的终端看不到里面
+    const terminals = storage.filter((c) => c.kind === 'me_terminal')
+    const networks = terminals.filter((c) => c.online !== false && !c.sameNetworkAs).length
+    const dark = terminals.filter((c) => c.online === false).length
+    const plain = storage.length - terminals.length
     const notes = [
-      `Looked into ${storage.length} chest(s) and drawer(s)${covers > 0 ? ` and ${covers} cover(s) that hold items` : ''} within ${radius} blocks of ${of}${looked}${skipped > 0 ? ` (the own slots of ${skipped} machine(s) and drawer controller(s) not counted)` : ''}: ${kinds} kind(s) of item.`,
+      `Looked into ${plain} chest(s) and drawer(s)${networks > 0 ? ` and ${networks} ME network(s) (through a terminal)` : ''}${covers > 0 ? ` and ${covers} cover(s) that hold items` : ''} within ${radius} blocks of ${of}${looked}${skipped > 0 ? ` (the own slots of ${skipped} machine(s) and drawer controller(s) not counted)` : ''}: ${kinds} kind(s) of item.`,
+      ...(networks > 0 ? ['A place marked "ME network" is a terminal: withdraw_items with its position takes the item out of the network.'] : []),
+      ...(dark > 0 ? [`${dark} ME terminal(s) are dark (no power or no channel): what their network stores cannot be seen and is not in these totals.`] : []),
+      ...(huge > 0 ? [HUGE_NETWORK_NOTE.replace('is listed only as far as that, most first', 'is counted only as far as that')] : []),
       ...(covers > 0 ? ['A place marked "cover <side>" is a cover on that face of the block there: withdraw_items with container {x, y, z, side, sneak: true}.'] : []),
       ...(total > containers.length ? [`Only ${containers.length} of ${total} containers were read (at most ${STOCK_MAX_CONTAINERS} at a time): the totals are not complete. Use a smaller radius, or "at" where the storage is.`] : []),
       // 向身体要的是每个容器的全部；还有没列全的，只会是老的身体（不认 kinds，一个容器最多给 60 种）
@@ -271,7 +306,7 @@ export const listStock: Tool = {
     if (shown.length === 0) return fail(`There is no page ${page}: ${list.length} item(s)${filter ? ` ${filter}` : ''}, ${pages(list.length, STOCK_LINES_PER_PAGE)} page(s).`)
     const lines = shown.map((l) => {
       const places = [...l.places].sort((a, b) => b.count - a.count)
-      const where = places.slice(0, 2).map((p) => `${formatPos(p)}${p.kind === 'drawers' ? ' drawers' : p.kind === 'cover' ? ` cover ${p.side ?? '?'}` : ''}${p.automated ? ' AUTOMATED' : ''} ${p.count}`)
+      const where = places.slice(0, 2).map((p) => `${formatPos(p)}${p.kind === 'drawers' ? ' drawers' : p.kind === 'cover' ? ` cover ${p.side ?? '?'}` : p.kind === 'me_terminal' ? ' ME network' : ''}${p.automated ? ' AUTOMATED' : ''} ${p.count}`)
       const name = nameOf(l)
       return `- ${l.count}× ${name ? `${name} ` : ''}[${itemKey(l)}]: ${where.join(', ')}${places.length > 2 ? `, and ${places.length - 2} more place(s)` : ''}${l.automated > 0 ? ` (${l.automated} of them in automated containers)` : ''}`
     })
