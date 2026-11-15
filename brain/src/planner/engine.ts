@@ -188,6 +188,8 @@ export class PlannerEngine {
     try {
       if (!this.#worker) {
         const worker = new Worker(new URL('./engine-worker.ts', import.meta.url), {
+          // A native Node 24 TS worker must not inherit --input-type, test runners or host preloads.
+          execArgv: [],
           resourceLimits: { maxOldGenerationSizeMb: 256, maxYoungGenerationSizeMb: 64, stackSizeMb: 8 },
         });
         this.#worker = worker;
@@ -241,7 +243,8 @@ export class PlannerEngine {
     else this.#queue = this.#queue.filter((queued) => queued !== request);
     const run: PlannerEngineRun = {
       id: request.id, source: PLANNER_ENGINE_SOURCE, startedAt: request.startedAt, completedAt: new Date().toISOString(),
-      operation: request.operation, outcome: error?.code ?? 'ok', elapsedMs: performance.now() - request.start, diagnostics,
+      operation: request.operation, outcome: error?.code ?? 'ok', elapsedMs: performance.now() - request.start,
+      ...(diagnostics ? { diagnostics } : {}),
     };
     if (diagnostics) { Object.freeze(diagnostics.fallbackErrors); Object.freeze(diagnostics); }
     Object.freeze(run);

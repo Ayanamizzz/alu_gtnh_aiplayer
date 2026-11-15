@@ -1,0 +1,14 @@
+[
+  {
+    "old": "let loading: Promise<boolean> | undefined;",
+    "new": "let loading: Promise<boolean> | undefined;\nlet diagnostics = { highsCalls: 0, simplexCalls: 0, fallbackErrors: [] as string[] };\nexport function resetLpDiagnostics(): void { diagnostics = { highsCalls: 0, simplexCalls: 0, fallbackErrors: [] }; }\nexport function getLpDiagnostics() { return { backend: activeLpEngine(), ...diagnostics, fallbackErrors: [...diagnostics.fallbackErrors] }; }"
+  },
+  {
+    "old": "      return solveWithHighs(highs, lp, options);\n    } catch (error) {",
+    "new": "      diagnostics.highsCalls++;\n      return solveWithHighs(highs, lp, options);\n    } catch (error) {\n      if (diagnostics.fallbackErrors.length < 20) diagnostics.fallbackErrors.push(error instanceof Error ? error.message.slice(0, 2000) : String(error).slice(0, 2000));"
+  },
+  {
+    "old": "  return solveLp(lp);",
+    "new": "  diagnostics.simplexCalls++;\n  return solveLp(lp);"
+  }
+]
