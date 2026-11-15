@@ -34,17 +34,26 @@ export function assertPlannerStructure(value, operation = 'calculate') {
   let sections = 0;
   let ports = 0;
   let constraints = 0;
+  // A runtime ladder may be large and shared by many nodes. Inspect it once,
+  // keeping preflight linear in the supplied JSON rather than nodes x variants.
+  const portCounts = new Map();
   for (const node of nodes) {
     const recipeIds = [node.recipeId, ...list(node.extraRecipes).map((entry) => record(entry).recipeId)];
     sections += recipeIds.length;
     check('nodes', sections);
     constraints += keys(node.portRates) + (node.solvePin === undefined ? 0 : 1) + (node.targetOutput ? 1 : 0);
     for (const recipeId of recipeIds) {
-      const recipe = recipes.get(recipeId);
-      if (!recipe) continue;
-      let outputs = list(recipe.outputs).length;
-      for (const variant of list(record(recipe.runtimeCalculation).variants)) outputs = Math.max(outputs, list(record(variant).outputs).length);
-      ports += list(recipe.inputs).length + outputs;
+      if (!portCounts.has(recipeId)) {
+        const recipe = recipes.get(recipeId);
+        let count = 0;
+        if (recipe) {
+          let outputs = list(recipe.outputs).length;
+          for (const variant of list(record(recipe.runtimeCalculation).variants)) outputs = Math.max(outputs, list(record(variant).outputs).length);
+          count = list(recipe.inputs).length + outputs;
+        }
+        portCounts.set(recipeId, count);
+      }
+      ports += portCounts.get(recipeId);
       check('ports', ports);
     }
   }

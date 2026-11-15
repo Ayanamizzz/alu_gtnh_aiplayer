@@ -285,6 +285,10 @@ test('machine mathematics match the fixed mod golden samples through both pure h
 test('invalid and oversized plans return explicit errors without poisoning the next valid request', async () => {
   const engine = new PlannerEngine();
   try {
+    assert.equal(engine.checkTimeout(), 30_000);
+    assert.equal(engine.checkTimeout(60_000), 60_000);
+    assert.throws(() => engine.checkTimeout(0), hasCode('invalid'));
+    assert.throws(() => engine.checkTimeout(120_001), hasCode('invalid'));
     await assert.rejects(engine.calculate({}), hasCode('invalid'));
     const bad = chain(); bad.recipes[0].eut = Number.NaN;
     await assert.rejects(engine.calculate(bad), hasCode('invalid'));
@@ -304,6 +308,16 @@ test('invalid and oversized plans return explicit errors without poisoning the n
   const small = new PlannerEngine({ maxOutputBytes: 1024 });
   try { await assert.rejects(small.calculate(chain()), hasCode('limit')); }
   finally { await small.close(); }
+});
+
+test('preflight rejects sparse arrays and accessors before host JSON serialization can expand or execute them', () => {
+  const sparse: unknown[] = []; sparse[1_000_000_000] = 1;
+  assert.throws(() => checkPlannerInput({ notes: sparse }), hasCode('limit'));
+  assert.throws(() => checkPlannerInput({ notes: new Array(3) }), hasCode('invalid'));
+  let accessed = false;
+  const accessor = Object.defineProperty({}, 'notes', { enumerable: true, get() { accessed = true; return 'not JSON'; } });
+  assert.throws(() => checkPlannerInput(accessor), hasCode('invalid'));
+  assert.equal(accessed, false);
 });
 
 test('shared preflight rejects excessive graph size before workspace adaptation or worker startup', async () => {

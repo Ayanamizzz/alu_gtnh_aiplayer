@@ -154,6 +154,11 @@ export class PlannerEngine {
     return this.#submit('calculate', project, options);
   }
 
+  /** Shared deadline validation for workspace's total operation budget. */
+  checkTimeout(timeoutMs?: number): number {
+    return boundedInteger(timeoutMs ?? this.#limits.timeoutMs, 1, 120_000, 'timeoutMs');
+  }
+
   checkInput(value: unknown, operation: 'calculate' | 'solve' = 'calculate'): PlannerCheckedInput {
     return checkPlannerInput(value, { maxInputBytes: this.#limits.maxInputBytes, operation });
   }
@@ -194,7 +199,7 @@ export class PlannerEngine {
     if ((this.#active || this.#retiring) && this.#queue.length >= this.#limits.maxQueued) {
       throw new PlannerEngineError('busy', 'Planner request queue is full.');
     }
-    const timeoutMs = boundedInteger(options.timeoutMs ?? this.#limits.timeoutMs, 1, 120_000, 'timeoutMs');
+    const timeoutMs = this.checkTimeout(options.timeoutMs);
     const start = performance.now();
     const startedAt = new Date().toISOString();
     const { json, inputSha256, inputBytes } = this.checkInput(value, operation);
@@ -328,12 +333,17 @@ export function encodePlannerJson(value: unknown, maxBytes: number): string {
     if (typeof item !== 'object') throw new PlannerEngineError('invalid', 'Planner input must be plain JSON.');
     if (ancestors.has(item)) throw new PlannerEngineError('invalid', 'Planner JSON contains a cycle.');
     const array = Array.isArray(item);
+    if (array && item.length > 250_000) throw new PlannerEngineError('limit', 'Planner JSON array exceeds its structure limit.');
     if (!array && Object.getPrototypeOf(item) !== Object.prototype && Object.getPrototypeOf(item) !== null) {
       throw new PlannerEngineError('invalid', 'Planner input must contain only plain JSON objects.');
     }
     ancestors.add(item);
     const result: Record<string, unknown> | unknown[] = array ? [] : Object.create(null) as Record<string, unknown>;
-    for (const key of Object.keys(item)) {
+    const keys = Object.keys(item);
+    if (array && (keys.length !== item.length || keys.some((key, index) => key !== String(index)))) {
+      throw new PlannerEngineError('invalid', 'Planner JSON arrays must be dense and contain only indexed values.');
+    }
+    for (const key of keys) {
       if (key === '__proto__' || key === 'constructor' || key === 'prototype') throw new PlannerEngineError('invalid', 'Unsafe planner JSON key.');
       const descriptor = Object.getOwnPropertyDescriptor(item, key)!;
       if (!('value' in descriptor)) throw new PlannerEngineError('invalid', 'Planner JSON cannot contain accessors.');

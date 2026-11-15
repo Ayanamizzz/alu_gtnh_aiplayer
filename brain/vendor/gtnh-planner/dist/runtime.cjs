@@ -25757,17 +25757,24 @@ function assertPlannerStructure(value, operation = "calculate") {
   let sections = 0;
   let ports = 0;
   let constraints = 0;
+  const portCounts = /* @__PURE__ */ new Map();
   for (const node of nodes) {
     const recipeIds = [node.recipeId, ...list(node.extraRecipes).map((entry) => record2(entry).recipeId)];
     sections += recipeIds.length;
     check2("nodes", sections);
     constraints += keys(node.portRates) + (node.solvePin === void 0 ? 0 : 1) + (node.targetOutput ? 1 : 0);
     for (const recipeId of recipeIds) {
-      const recipe = recipes.get(recipeId);
-      if (!recipe) continue;
-      let outputs = list(recipe.outputs).length;
-      for (const variant of list(record2(recipe.runtimeCalculation).variants)) outputs = Math.max(outputs, list(record2(variant).outputs).length);
-      ports += list(recipe.inputs).length + outputs;
+      if (!portCounts.has(recipeId)) {
+        const recipe = recipes.get(recipeId);
+        let count = 0;
+        if (recipe) {
+          let outputs = list(recipe.outputs).length;
+          for (const variant of list(record2(recipe.runtimeCalculation).variants)) outputs = Math.max(outputs, list(record2(variant).outputs).length);
+          count = list(recipe.inputs).length + outputs;
+        }
+        portCounts.set(recipeId, count);
+      }
+      ports += portCounts.get(recipeId);
       check2("ports", ports);
     }
   }

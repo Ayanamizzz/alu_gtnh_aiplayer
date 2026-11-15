@@ -60,7 +60,7 @@
       "budget.ts": "c5cdd1347b4544e950af4f674345d2e6c781baa79c89a854b51d80b1459cc499",
       "limits.mjs": "d661309fe1200cf73e9d9fbb5dbd723d959514673d00489710a435094640eee2",
       "limits.d.mts": "edd94ee004c4c8f626a5b3731139762ca6c994b0790229ec6d8e4cd15a66ea17",
-      "shape-budget.mjs": "8124ced4825064e0a5c3e16a740b5f248bed0243191d0ed35eee7cdba7a77dd8",
+      "shape-budget.mjs": "9a2875e0d86d9c48daa3535fd75e6084d76c94a140783c9574e18d1e4959f745",
       "shape-budget.d.mts": "7f219607f5b65f98a18076fe59adf0e870cf4bbccdde12fe49fea65a8c493f28",
       "package.json": "04a4312cf87fdceac8ad330588726de9e5a208e8d6d7d05cef8c5f74a68f9cd7",
       "lp-observability.json": "3cccbc6313afa861efce332c7ba4a771003294f37bf5f7fe13bd1f991c60f1b8",
@@ -69,7 +69,7 @@
       "toolchain/package-lock.json": "4de41254c285b32b53a70fc4fcdecab05173f9191bc84903b4c2ae147d0918a1"
     },
     "outputHashes": {
-      "dist/runtime.cjs": "ebc207a292ddf3eca6e6c1c2c2995d418608ed4601772eb7f62764b4f1dba0b6",
+      "dist/runtime.cjs": "5965e880c2992db755822902e9751efb81d12fd319e791aa1dafd82fd72ef025",
       "dist/test-support.cjs": "4a9c6810a3399c1fa88e2934eedf0b625833fdaa65e892200f34180759a00e01",
       "dist/catalog.mjs": "0cc9cfdce27a5aa7aa4fcb7ae1d5e2d873d849558eaf8a852759468e2f6cd90d",
       "dist/highs.wasm": "7e6432b2b26f4fab9f6d9bac55da43307c7a4b1b071cb204cb4d23e1901bc4d0",
