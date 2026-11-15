@@ -23,6 +23,7 @@ import { buildBlueprint, checkBlueprint, listBlueprints, readBlueprint } from '.
 import { say, whisper } from './chat.ts'
 import { craftItem, findInStorage, findItem, findMachines, findRecipes, findUses, processItems } from './crafting.ts'
 import { totalMaterials } from './materials.ts'
+import { productionPlan } from './production.ts'
 import { deleteDraft, listDesigns, listDrafts, listImages, publishDraft, routineStatus, runProgramTool, startRoutine, stopRoutine, viewDraft } from './design.ts'
 import { reportProblem } from './feedback.ts'
 import { clip, dataWithLocalNames } from './format.ts'
@@ -261,6 +262,7 @@ export const LIBRARY_TOOLS: readonly Tool[] = [
   findStructure,
   checkStructure,
   totalMaterials,
+  productionPlan,
 ]
 
 /**
@@ -370,7 +372,7 @@ export function otherLine(line: ToolLine, name: string): string | undefined {
 }
 
 export const LIBRARY_INDEX_HEAD =
-  'Library functions are not in your tool list; a program calls them like tools. To read one: return (await tool(name, input)).text; to compute with one, use .data. Below: name {input}: what -> data'
+  'Library calls: await tool(name,input). Read .text; compute with .data. Index: name {input}: purpose -> data'
 
 /**
  * 库函数的索引：run_program 的说明后面带着它，模型靠它知道这些函数存在（start_routine 的说明指到这里，不重复）。
@@ -393,6 +395,7 @@ export function schemaForModel(schema: Schema): Record<string, unknown> {
       if (schema.description) out.description = schema.description
       out.properties = Object.fromEntries(Object.entries(schema.properties).map(([key, sub]) => [key, schemaForModel(sub)]))
       if (schema.required && schema.required.length > 0) out.required = schema.required
+      if (schema.additionalProperties === true) out.additionalProperties = true
       return out
     }
     case 'array':
@@ -491,8 +494,8 @@ export async function runTool(
     const content = result.keepWhole ? result.content : clip(result.content, max)
     const out: ToolResult = result.isError ? { content, isError: true } : { content }
     if (result.images && result.images.length > 0) out.images = result.images
-    // data 里的名字和文字结果里一样用游戏里的中文名（英文原名留在 en 里）
-    if (result.data !== undefined) out.data = dataWithLocalNames(result.data)
+    // Native interchange formats keep their original values; ordinary observations use local display names.
+    if (result.data !== undefined) out.data = tool.rawData ? result.data : dataWithLocalNames(result.data)
     return out
   } catch (e) {
     if (e instanceof ToolFailure) return { content: e.message, isError: true }

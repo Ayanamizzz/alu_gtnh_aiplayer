@@ -4,6 +4,7 @@ import type { BridgeApi } from '../bridge/api.ts'
 import type { TaskInfo } from '../bridge/protocol.ts'
 import type { DesignWorkspace } from '../design/index.ts'
 import type { PackData } from '../packdata/index.ts'
+import type { PlannerWorkspace } from '../planner/workspace.ts'
 import type { LogPage, LogQuery } from '../store/activity-log.ts'
 import type { FeedbackInput } from '../store/feedback.ts'
 import type { ChatLine } from '../store/chat-log.ts'
@@ -148,6 +149,8 @@ export interface ToolHooks {
 
 export interface ToolContext {
   botName: string
+  /** The lifetime of this invocation; offline computations may stop with their caller. */
+  signal?: AbortSignal
   /**
    * 哪条线在调。给了的话，另一条线的事按名字调到时不执行、如实说明归谁（对话线调会动身体的工具、干活线调 say）。
    * 上层没提供时不分线：按名字找得到的都执行。
@@ -184,6 +187,8 @@ export interface ToolContext {
   surroundings?: SurroundingsCache
   /** 自己出设计用的：跑程序的沙箱、图纸草稿、主人传的图片。上层没提供时这类工具用不了。 */
   design?: DesignWorkspace
+  /** Offline native production calculations and immutable analysis records; never a body action. */
+  planner?: PlannerWorkspace
   /** “基地的做法”（store/methods.ts）。上层没提供时 base_methods、set_base_method 用不了，别处也不带它的记录。 */
   methods?: MethodAccess
   /** 工作清单（store/todo.ts）。上层没提供时 todo 用不了。 */
@@ -220,6 +225,8 @@ export interface Tool {
   /** 给模型看，英文，简短准确。 */
   description: string
   inputSchema: ObjectSchema
+  /** Preserve native machine-readable data, including English names and source fingerprints. */
+  rawData?: boolean
   /** input 已按 inputSchema 校验过。返回字符串等同于 { content }。 */
   run(ctx: ToolContext, input: any): Promise<ToolResult | string>
   /**

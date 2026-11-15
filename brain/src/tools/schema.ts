@@ -13,7 +13,8 @@ export interface ObjectSchema {
   description?: string
   properties: Record<string, Schema>
   required?: string[]
-  additionalProperties?: false
+  /** Explicit true preserves opaque JSON payloads; the owning tool validates their native format. */
+  additionalProperties?: boolean
 }
 
 // ── 写 schema 的小帮手 ──
@@ -124,16 +125,20 @@ function check(schema: Schema, value: unknown, path: string, errors: string[]): 
         return value
       }
       const input = value as Record<string, unknown>
-      const out: Record<string, unknown> = {}
+      // fromEntries creates own data properties (including a literal __proto__ key), not prototype assignments.
+      const out: Record<string, unknown> = schema.additionalProperties === true ? Object.fromEntries(Object.entries(input)) : {}
       for (const key of schema.required ?? []) {
         if (input[key] === undefined || input[key] === null) errors.push(`${path ? `${path}.` : ''}${key} is required`)
       }
       for (const [key, sub] of Object.entries(schema.properties)) {
         const v = input[key]
-        if (v === undefined || v === null) continue
-        out[key] = check(sub, v, path ? `${path}.${key}` : key, errors)
+        if (v === undefined || v === null) {
+          delete out[key]
+          continue
+        }
+        Object.defineProperty(out, key, { value: check(sub, v, path ? `${path}.${key}` : key, errors), enumerable: true, configurable: true, writable: true })
       }
-      // 多给的字段直接忽略，不算错
+      // 默认忽略多给的字段；原生JSON载荷须明确additionalProperties:true才保留。
       return out
     }
   }
