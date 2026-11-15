@@ -1,5 +1,13 @@
 [
   {
+    "old": "import { solveBasis, type BasisRow } from \"./exact-basis\";",
+    "new": "import { assertLpBudget, assertSimplexBudget } from \"../../../../budget\";\nimport { solveBasis, type BasisRow } from \"./exact-basis\";"
+  },
+  {
+    "old": "export function solveLpAuto(lp: LinearProgram, options: LpSolveOptions = {}): LpSolution {",
+    "new": "export function solveLpAuto(lp: LinearProgram, options: LpSolveOptions = {}): LpSolution {\n  assertLpBudget(lp);"
+  },
+  {
     "old": "let loading: Promise<boolean> | undefined;",
     "new": "let loading: Promise<boolean> | undefined;\nlet diagnostics = { highsCalls: 0, simplexCalls: 0, fallbackErrors: [] as string[] };\nexport function resetLpDiagnostics(): void { diagnostics = { highsCalls: 0, simplexCalls: 0, fallbackErrors: [] }; }\nexport function getLpDiagnostics() { return { backend: activeLpEngine(), ...diagnostics, fallbackErrors: [...diagnostics.fallbackErrors] }; }"
   },
@@ -9,6 +17,6 @@
   },
   {
     "old": "  return solveLp(lp);",
-    "new": "  diagnostics.simplexCalls++;\n  return solveLp(lp);"
+    "new": "  assertSimplexBudget(lp);\n  diagnostics.simplexCalls++;\n  return solveLp(lp);"
   }
 ]

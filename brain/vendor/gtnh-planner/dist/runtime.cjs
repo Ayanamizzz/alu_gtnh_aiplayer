@@ -37,6 +37,7 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 // node_modules/highs/build/highs.js
 var require_highs = __commonJS({
   "node_modules/highs/build/highs.js"(exports2, module2) {
+    "use strict";
     var Module = (() => {
       var _scriptName = globalThis.document?.currentScript?.src;
       return async function(moduleArg = {}) {
@@ -1265,11 +1266,11 @@ var require_highs = __commonJS({
           FS.devices[dev] = { stream_ops: ops };
         }, getDevice: (dev) => FS.devices[dev], getMounts(mount) {
           var mounts = [];
-          var check2 = [mount];
-          while (check2.length) {
-            var m = check2.pop();
+          var check4 = [mount];
+          while (check4.length) {
+            var m = check4.pop();
             mounts.push(m);
-            check2.push(...m.mounts);
+            check4.push(...m.mounts);
           }
           return mounts;
         }, syncfs(populate, callback) {
@@ -2890,7 +2891,7 @@ __export(runtime_entry_exports, {
   calculateNative: () => calculateNative,
   getLpDiagnostics: () => getLpDiagnostics,
   initialize: () => initialize,
-  resetLpDiagnostics: () => resetLpDiagnostics,
+  resetLpDiagnostics: () => resetLpDiagnostics2,
   solveNative: () => solveNative
 });
 module.exports = __toCommonJS(runtime_entry_exports);
@@ -3441,9 +3442,9 @@ function $constructor(name, initializer3, params) {
     inst._zod.traits.add(name);
     initializer3(inst, def);
     const proto = _.prototype;
-    const keys = Object.keys(proto);
-    for (let i = 0; i < keys.length; i++) {
-      const k = keys[i];
+    const keys2 = Object.keys(proto);
+    for (let i = 0; i < keys2.length; i++) {
+      const k = keys2[i];
       if (!(k in inst)) {
         inst[k] = proto[k].bind(inst);
       }
@@ -3667,12 +3668,12 @@ function getElementAtPath(obj, path) {
   return path.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
-  const keys = Object.keys(promisesObj);
-  const promises = keys.map((key) => promisesObj[key]);
+  const keys2 = Object.keys(promisesObj);
+  const promises = keys2.map((key) => promisesObj[key]);
   return Promise.all(promises).then((results) => {
     const resolvedObj = {};
-    for (let i = 0; i < keys.length; i++) {
-      resolvedObj[keys[i]] = results[i];
+    for (let i = 0; i < keys2.length; i++) {
+      resolvedObj[keys2[i]] = results[i];
     }
     return resolvedObj;
   });
@@ -5852,8 +5853,8 @@ function handlePropertyResult(result, final, key, input, isOptionalIn, isOptiona
   }
 }
 function normalizeDef(def) {
-  const keys = Object.keys(def.shape);
-  for (const k of keys) {
+  const keys2 = Object.keys(def.shape);
+  for (const k of keys2) {
     if (!def.shape?.[k]?._zod?.traits?.has("$ZodType")) {
       throw new Error(`Invalid element at key "${k}": expected a Zod schema`);
     }
@@ -5861,9 +5862,9 @@ function normalizeDef(def) {
   const okeys = optionalKeys(def.shape);
   return {
     ...def,
-    keys,
-    keySet: new Set(keys),
-    numKeys: keys.length,
+    keys: keys2,
+    keySet: new Set(keys2),
+    numKeys: keys2.length,
     optionalKeys: new Set(okeys)
   };
 }
@@ -15671,8 +15672,8 @@ var ZodType = /* @__PURE__ */ $constructor("ZodType", (inst, def) => {
       reg.add(this, meta3);
       return this;
     },
-    refine(check2, params) {
-      return this.check(refine(check2, params));
+    refine(check4, params) {
+      return this.check(refine(check4, params));
     },
     superRefine(refinement, params) {
       return this.check(superRefine(refinement, params));
@@ -16472,11 +16473,11 @@ var ZodEnum = /* @__PURE__ */ $constructor("ZodEnum", (inst, def) => {
   inst._zod.processJSONSchema = (ctx, json2, params) => enumProcessor(inst, ctx, json2, params);
   inst.enum = def.entries;
   inst.options = Object.values(def.entries);
-  const keys = new Set(Object.keys(def.entries));
+  const keys2 = new Set(Object.keys(def.entries));
   inst.extract = (values, params) => {
     const newEntries = {};
     for (const value of values) {
-      if (keys.has(value)) {
+      if (keys2.has(value)) {
         newEntries[value] = def.entries[value];
       } else
         throw new Error(`Key ${value} not found in enum`);
@@ -16491,7 +16492,7 @@ var ZodEnum = /* @__PURE__ */ $constructor("ZodEnum", (inst, def) => {
   inst.exclude = (values, params) => {
     const newEntries = { ...def.entries };
     for (const value of values) {
-      if (keys.has(value)) {
+      if (keys2.has(value)) {
         delete newEntries[value];
       } else
         throw new Error(`Key ${value} not found in enum`);
@@ -25704,6 +25705,116 @@ function pivot(tableau, basis, row2, col, columns) {
   basis[row2] = col;
 }
 
+// limits.mjs
+var STRUCTURAL_LIMITS = Object.freeze({
+  nodes: 1024,
+  edges: 4096,
+  ports: 8192,
+  storages: 1024,
+  constraints: 4096,
+  links: 16384,
+  lpColumns: 4096,
+  lpRows: 8192,
+  lpNonzeros: 131072,
+  lpDenseCells: 8e6,
+  simplexTableauCells: 4e6
+});
+
+// shape-budget.mjs
+var list = (value) => Array.isArray(value) ? value : [];
+var record2 = (value) => value !== null && typeof value === "object" && !Array.isArray(value) ? value : {};
+var keys = (value) => Object.keys(record2(value)).length;
+function check2(kind, count) {
+  if (count <= STRUCTURAL_LIMITS[kind]) return;
+  const error51 = new Error(`Planner ${kind} budget exceeded: ${count} > ${STRUCTURAL_LIMITS[kind]}. Split the project into smaller analyses.`);
+  error51.name = "PlannerLimitError";
+  throw error51;
+}
+function assertPlannerStructure(value, operation = "calculate") {
+  const input = record2(value);
+  if (operation === "solve") {
+    const machines = list(input.machines).map(record2);
+    const edges = list(input.edges);
+    const pools = list(input.pools).map(record2);
+    const drawers = list(input.drawers).map(record2);
+    check2("nodes", machines.length);
+    check2("edges", edges.length);
+    check2("storages", drawers.length);
+    check2("ports", machines.reduce((sum, machine) => sum + list(machine.inputs).length + list(machine.outputs).length, 0));
+    check2("constraints", pools.length + drawers.length + keys(input.extentPins) + machines.reduce((sum, machine) => sum + keys(machine.targetInputRates) + keys(machine.targetOutputRates) + (machine.countFixed ? 1 : 0), 0));
+    check2("links", edges.length * 2 + pools.reduce((sum, pool) => sum + list(pool.machines).length, 0) + drawers.reduce((sum, drawer) => sum + list(drawer.links).length + list(drawer.takers).length, 0));
+    return;
+  }
+  const recipes = new Map(list(input.recipes).map((entry) => {
+    const recipe = record2(entry);
+    return [recipe.id, recipe];
+  }));
+  const nodes = list(input.nodes).map(record2);
+  check2("nodes", nodes.length);
+  check2("edges", list(input.edges).length);
+  const storages = list(input.storages).map(record2);
+  check2("storages", storages.length);
+  let sections = 0;
+  let ports = 0;
+  let constraints = 0;
+  for (const node of nodes) {
+    const recipeIds = [node.recipeId, ...list(node.extraRecipes).map((entry) => record2(entry).recipeId)];
+    sections += recipeIds.length;
+    check2("nodes", sections);
+    constraints += keys(node.portRates) + (node.solvePin === void 0 ? 0 : 1) + (node.targetOutput ? 1 : 0);
+    for (const recipeId of recipeIds) {
+      const recipe = recipes.get(recipeId);
+      if (!recipe) continue;
+      let outputs = list(recipe.outputs).length;
+      for (const variant of list(record2(recipe.runtimeCalculation).variants)) outputs = Math.max(outputs, list(record2(variant).outputs).length);
+      ports += list(recipe.inputs).length + outputs;
+      check2("ports", ports);
+    }
+  }
+  constraints += storages.filter((storage) => storage.targetPerSecond !== void 0).length + (input.targetRate ? 1 : 0);
+  check2("constraints", constraints);
+  check2("links", list(input.edges).length * 2 + Object.values(record2(input.spareShares)).reduce((sum, shares2) => sum + keys(shares2), 0));
+}
+
+// budget.ts
+var exceeded;
+function resetBudget() {
+  exceeded = void 0;
+}
+function fail(message) {
+  exceeded = message;
+  const error51 = new Error(message);
+  error51.name = "PlannerLimitError";
+  throw error51;
+}
+function throwIfBudgetExceeded() {
+  if (exceeded) fail(exceeded);
+}
+function check3(kind, count) {
+  if (count > STRUCTURAL_LIMITS[kind]) fail(`Planner ${kind} budget exceeded: ${count} > ${STRUCTURAL_LIMITS[kind]}. Split the project into smaller analyses.`);
+}
+function checkProjectBudget(project) {
+  assertPlannerStructure(project, "calculate");
+}
+function checkSolveBudget(input) {
+  assertPlannerStructure(input, "solve");
+}
+function assertLpBudget(lp) {
+  const columns = lp.maximize.length;
+  const rows = lp.equalities.length + lp.upperBounds.length;
+  check3("lpColumns", columns);
+  check3("lpRows", rows);
+  check3("lpDenseCells", columns * rows);
+  let nonzeros = 0;
+  for (const row2 of lp.equalities) nonzeros += row2.coefficients.size;
+  for (const row2 of lp.upperBounds) nonzeros += row2.coefficients.size;
+  check3("lpNonzeros", nonzeros);
+}
+function assertSimplexBudget(lp) {
+  const rows = 2 * lp.equalities.length + lp.upperBounds.length;
+  check3("simplexTableauCells", (rows + 2) * (lp.maximize.length + rows + 2));
+}
+
 // upstream/src/lib/solver/exact-basis.ts
 function solveBasis(rows, basicColumns) {
   const nR = rows.length;
@@ -25890,6 +26001,7 @@ function hasIntegerColumns(lp) {
   return (lp.integers?.length ?? 0) > 0 || (lp.binaries?.length ?? 0) > 0;
 }
 function solveLpAuto(lp, options = {}) {
+  assertLpBudget(lp);
   if (highs) {
     try {
       diagnostics.highsCalls++;
@@ -25905,6 +26017,7 @@ function solveLpAuto(lp, options = {}) {
       console.error("HiGHS solve failed; falling back to the homegrown simplex.", error51);
     }
   }
+  assertSimplexBudget(lp);
   diagnostics.simplexCalls++;
   return solveLp(lp);
 }
@@ -26105,9 +26218,9 @@ function getProjectRatioBranches(project, side = "output") {
   for (const edge of project.edges) {
     const storageId = side === "input" ? edge.target : edge.source;
     if (!ratioIds.has(storageId) || roles.get(storageId) !== "buffer") continue;
-    const list = outgoing.get(storageId) ?? [];
-    list.push(edge);
-    outgoing.set(storageId, list);
+    const list2 = outgoing.get(storageId) ?? [];
+    list2.push(edge);
+    outgoing.set(storageId, list2);
   }
   for (const [id, edges] of outgoing) {
     const branches = getStorageRatioBranches(edges, side);
@@ -27052,7 +27165,7 @@ function readAnswer(model, answer) {
       edgeFlows.set(original, (edgeFlows.get(original) ?? 0) + flow);
     }
   }
-  const external = (list, side) => list.filter((e) => !model.hidden.has(e.port.node)).flatMap((e) => {
+  const external = (list2, side) => list2.filter((e) => !model.hidden.has(e.port.node)).flatMap((e) => {
     const row2 = model.row(e.port);
     return row2 ? [{ node: e.port.node, portKey: row2.portKey, resourceKey: row2.key, perSecond: e.ratePerSecond, side }] : [];
   });
@@ -27067,7 +27180,7 @@ function readAnswer(model, answer) {
     perSecond: e.perSecond
   }));
   const spills = Object.entries(solution.drawers?.spills ?? {}).flatMap(
-    ([drawerId, list]) => external(list, "out").filter((e) => e.perSecond > DUST).map((e) => ({
+    ([drawerId, list2]) => external(list2, "out").filter((e) => e.perSecond > DUST).map((e) => ({
       nodeId: e.node,
       portKey: e.portKey,
       resourceKey: e.resourceKey,
@@ -27983,8 +28096,8 @@ var SolveContext = class {
     const externals = committed.externals.slice();
     const portsOf = /* @__PURE__ */ new Map();
     this.model.connectedPorts.forEach((port2, p) => {
-      const list = portsOf.get(port2.machine);
-      if (list) list.push(p);
+      const list2 = portsOf.get(port2.machine);
+      if (list2) list2.push(p);
       else portsOf.set(port2.machine, [p]);
     });
     let snapped = false;
@@ -28399,8 +28512,8 @@ function levels(ctx) {
     if (drawerEnds && ctx.drawnPorts.has(p)) continue;
     const buying = model.connectedPorts[p].input;
     const key = (buying ? 0 : 1) * 4294967296 - model.portSteps[p];
-    const list = byKey.get(key);
-    if (list) list.push(p);
+    const list2 = byKey.get(key);
+    if (list2) list2.push(p);
     else byKey.set(key, [p]);
   }
   return [...byKey.keys()].sort((a, b) => a - b).map((key) => {
@@ -28918,15 +29031,15 @@ function enumerate(ctx, points = /* @__PURE__ */ new Map(), stats) {
   const tried = swaps.slice(0, cap);
   const intos = /* @__PURE__ */ new Map();
   for (const [out, into] of tried) {
-    const list = intos.get(out) ?? [];
-    intos.set(out, list);
-    list.push(into);
+    const list2 = intos.get(out) ?? [];
+    intos.set(out, list2);
+    list2.push(into);
   }
   const workable = /* @__PURE__ */ new Set();
-  for (const [out, list] of intos) {
+  for (const [out, list2] of intos) {
     const rest = new Set(open);
     rest.delete(out);
-    for (const into of gatesThatMayHelp(ctx, rest, list)) workable.add(`${out}:${into}`);
+    for (const into of gatesThatMayHelp(ctx, rest, list2)) workable.add(`${out}:${into}`);
   }
   const byDecision = /* @__PURE__ */ new Map();
   const seen = /* @__PURE__ */ new Set([keyString(chosen)]);
@@ -28943,9 +29056,9 @@ function enumerate(ctx, points = /* @__PURE__ */ new Map(), stats) {
     if (seen.has(text)) continue;
     seen.add(text);
     points.set(text, alt);
-    const list = byDecision.get(out) ?? [];
-    byDecision.set(out, list);
-    list.push(
+    const list2 = byDecision.get(out) ?? [];
+    byDecision.set(out, list2);
+    list2.push(
       asAlternative(
         ctx,
         alt.externals,
@@ -29131,10 +29244,10 @@ function splitIslands(input) {
   };
   const sparesIn = (nodes) => {
     const stored = input.spares;
-    const keys = Object.keys(stored);
-    if (keys.length === 0) return stored;
+    const keys2 = Object.keys(stored);
+    if (keys2.length === 0) return stored;
     const out = {};
-    for (const key of keys) {
+    for (const key of keys2) {
       if (Object.keys(stored[key]).some((bearer) => nodes.has(nodeOfBearer(bearer)))) out[key] = stored[key];
     }
     return out;
@@ -29299,13 +29412,13 @@ function bearerKey(ref) {
   return `${ref.node}${ref.input ? ":i:" : ":o:"}${ref.port}`;
 }
 var has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
-function shares(keys, exact, stored) {
+function shares(keys2, exact, stored) {
   let split = exact;
   if (split === void 0) {
     let best = 1;
     for (const candidate of Object.values(stored)) {
       let common = 0;
-      for (const k of keys) if (has(candidate, k)) common++;
+      for (const k of keys2) if (has(candidate, k)) common++;
       if (common > best) {
         best = common;
         split = candidate;
@@ -29314,7 +29427,7 @@ function shares(keys, exact, stored) {
   }
   if (split === void 0) return null;
   const chosen = split;
-  const out = keys.map((k) => Math.max(0, has(chosen, k) ? chosen[k] : 0));
+  const out = keys2.map((k) => Math.max(0, has(chosen, k) ? chosen[k] : 0));
   const total = out.reduce((a, b) => a + b, 0);
   if (!(total > 0)) return null;
   return out.map((s) => s / total);
@@ -29332,8 +29445,8 @@ function applySpares(ctx, alternatives, points, stored) {
   const byDecision = /* @__PURE__ */ new Map();
   for (const option4 of alternatives.options) {
     const k = bearerKey(option4.replaces);
-    const list = byDecision.get(k);
-    if (list) list.push(option4);
+    const list2 = byDecision.get(k);
+    if (list2) list2.push(option4);
     else byDecision.set(k, [option4]);
   }
   const drafts = [];
@@ -29351,10 +29464,10 @@ function applySpares(ctx, alternatives, points, stored) {
       vertices.push(point);
     }
     if (usable.length === 0) continue;
-    const keys = usable.map((o) => bearerKey(o.opens));
-    const key = [...keys].sort((a, b) => a < b ? -1 : a > b ? 1 : 0).join("|");
+    const keys2 = usable.map((o) => bearerKey(o.opens));
+    const key = [...keys2].sort((a, b) => a < b ? -1 : a > b ? 1 : 0).join("|");
     const exact = has(stored, key) ? stored[key] : void 0;
-    drafts.push({ key, importing, options: usable, vertices, shares: shares(keys, exact, stored) });
+    drafts.push({ key, importing, options: usable, vertices, shares: shares(keys2, exact, stored) });
   }
   if (drafts.length === 0) return [];
   let anyCustom = false;
@@ -29551,9 +29664,9 @@ function findLoops(ctx, read) {
     const ring = loopsOf(next);
     const byRing = /* @__PURE__ */ new Map();
     members.forEach((_, k) => {
-      const list = byRing.get(ring[k]) ?? [];
-      byRing.set(ring[k], list);
-      list.push(k);
+      const list2 = byRing.get(ring[k]) ?? [];
+      byRing.set(ring[k], list2);
+      list2.push(k);
     });
     for (const group of byRing.values()) {
       if (group.length === 1 && !next[group[0]].includes(group[0])) continue;
@@ -30007,8 +30120,8 @@ function wiringDiagnostics(ctx, scales, terminalIn) {
   model.connectedPorts.forEach((port2, p) => {
     if (port2.input) return;
     const resource = model.machines[port2.machine].spec.outputs[port2.portIndex].resource;
-    const list = connected.get(resource);
-    if (list) list.push(p);
+    const list2 = connected.get(resource);
+    if (list2) list2.push(p);
     else connected.set(resource, [p]);
   });
   model.machines.forEach((md, m) => {
@@ -31062,9 +31175,9 @@ function calculateThroughput(project, options = {}) {
     const inputs = {};
     const outputs = {};
     const perCraft = { inputs: {}, outputs: {} };
-    const addPerCraft = (record2, resource, amount) => {
+    const addPerCraft = (record3, resource, amount) => {
       const key = makeResourceKey(resource.kind, resource.id);
-      record2[key] = (record2[key] ?? 0) + amount;
+      record3[key] = (record3[key] ?? 0) + amount;
     };
     for (const input of nodeRecipe.inputs) {
       if (!isRecipeInputConsumed(input)) {
@@ -31347,10 +31460,10 @@ function buildDisabledNodeResult(nodeId, recipe) {
     warnings: []
   };
 }
-function addFlow(record2, resource, amountPerSecond) {
+function addFlow(record3, resource, amountPerSecond) {
   const key = makeResourceKey(resource.kind, resource.id);
-  const existing = record2[key];
-  record2[key] = {
+  const existing = record3[key];
+  record3[key] = {
     key,
     kind: resource.kind,
     resourceId: resource.id,
@@ -31649,11 +31762,11 @@ function finalizeNodeReports(project, recipesById, nodes, edgeResults, storagesB
     if (inputSupply && inputSupply.limit < 1 - EPSILON4) {
       const honestMap = honestSupplyByNodeAndResource.get(node.id);
       const supplyMap = inputSupplyByNodeAndResource.get(node.id);
-      const keys = [...supplyMap?.keys() ?? []].sort(
+      const keys2 = [...supplyMap?.keys() ?? []].sort(
         (left, right) => left < right ? -1 : left > right ? 1 : 0
       );
       let bestRatio = Number.POSITIVE_INFINITY;
-      for (const key of keys) {
+      for (const key of keys2) {
         const flow = nodeResult.inputs[key];
         if (!flow || flow.amountPerSecond <= EPSILON4) {
           continue;
@@ -31668,7 +31781,7 @@ function finalizeNodeReports(project, recipesById, nodes, edgeResults, storagesB
       if (limitingKey !== void 0 && Number.isFinite(bestRatio)) {
         const tieWindow = Math.max(0.01, bestRatio * 0.01);
         const tied = [];
-        for (const key of keys) {
+        for (const key of keys2) {
           if (key === limitingKey) {
             continue;
           }
@@ -31884,6 +31997,10 @@ function calculateFuelEstimate(project, totalEuT) {
 }
 
 // runtime-entry.ts
+function resetLpDiagnostics2() {
+  resetLpDiagnostics();
+  resetBudget();
+}
 async function initialize(wasmPath) {
   if (!await initLpEngine({ wasmUrl: wasmPath })) {
     throw new Error("Bundled HiGHS WASM could not be initialized. No simplex-only service is started.");
@@ -31903,11 +32020,25 @@ function checkIds(groups) {
   }
 }
 function calculateNative(raw) {
-  const project = factoryProjectSchema.parse(raw);
+  factoryProjectSchema.parse(raw);
+  const project = raw;
+  for (const node of project.nodes) {
+    external_exports.number().int().positive().parse(node.parallel);
+    if (project.planMode && node.enabled) {
+      external_exports.number().positive("Plan-mode machineCount seed must be positive.").parse(node.machineCount);
+      if (node.solvePin !== void 0) external_exports.number().positive("Use an unpinned or disabled node instead of solvePin: 0.").parse(node.solvePin);
+    }
+  }
+  for (const recipe of project.recipes) {
+    if (recipe.machineProfile?.kind !== void 0) external_exports.enum(["single", "multiblock", "crafting", "automation"]).parse(recipe.machineProfile.kind);
+  }
   checkIds([project.nodes, project.storages ?? []]);
   checkIds([project.recipes]);
   checkIds([project.edges]);
-  return calculateThroughput(project);
+  checkProjectBudget(project);
+  const result = calculateThroughput(project);
+  throwIfBudgetExceeded();
+  return result;
 }
 var rates = external_exports.record(external_exports.string().regex(/^\d+$/), external_exports.number());
 var port = external_exports.object({
@@ -31953,7 +32084,10 @@ function solveNative(raw) {
   const input = solveInputSchema.parse(raw);
   checkIds([input.machines, input.drawers]);
   checkIds([input.edges]);
-  return solvePlan(input);
+  checkSolveBudget(input);
+  const result = solvePlan(input);
+  throwIfBudgetExceeded();
+  return result;
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {

@@ -1,4 +1,5 @@
 {
   "mod/handlers.json": "342116a1c83c58266bc5bfcab995792477165e7c03594724612138541302189e",
-  "mod/LICENSE": "d8bdb0dfb0ef686818b27e362e1d204f201d2757f5e2f749e6294c2b18ec1d56"
+  "mod/LICENSE": "d8bdb0dfb0ef686818b27e362e1d204f201d2757f5e2f749e6294c2b18ec1d56",
+  "mod/machine-goldens-sample.json": "31d4df2c9592bd0ace1e929548214508f2ec559ed6ecbf3b42e97cedb11e35b9"
 }

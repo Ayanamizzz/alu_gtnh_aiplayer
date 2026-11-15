@@ -1,4 +1,20 @@
+import { createHash } from 'node:crypto';
 import { Worker } from 'node:worker_threads';
+import { STRUCTURAL_LIMITS } from '../../vendor/gtnh-planner/limits.mjs';
+import { assertPlannerStructure } from '../../vendor/gtnh-planner/shape-budget.mjs';
+
+export { STRUCTURAL_LIMITS };
+export const DEFAULT_PLANNER_INPUT_BYTES = 8 * 1024 * 1024;
+export interface PlannerCheckedInput { json: string; inputSha256: string; inputBytes: number }
+
+/** Before workspace copy/prepare: bounded plain JSON, depth/value count, bytes and graph-size policy. No solver or data lookup. */
+export function checkPlannerInput(value: unknown, options: { maxInputBytes?: number; operation?: 'calculate' | 'solve' } = {}): PlannerCheckedInput {
+  const maxBytes = boundedInteger(options.maxInputBytes ?? DEFAULT_PLANNER_INPUT_BYTES, 1024, 32 * 1024 * 1024, 'maxInputBytes');
+  const json = encodePlannerJson(value, maxBytes);
+  try { assertPlannerStructure(JSON.parse(json) as unknown, options.operation); }
+  catch (error) { throw new PlannerEngineError('limit', error instanceof Error ? error.message : String(error)); }
+  return { json, inputSha256: createHash('sha256').update(json).digest('hex'), inputBytes: Buffer.byteLength(json) };
+}
 
 export const PLANNER_ENGINE_SOURCE = Object.freeze({
   name: 'gtnh-factory-flow',
@@ -40,6 +56,9 @@ export interface PlannerEngineDiagnostics {
   highsCalls: number;
   simplexCalls: number;
   fallbackErrors: string[];
+  /** SHA-256 of the actual local assets loaded by this worker. */
+  runtimeSha256?: string;
+  wasmSha256?: string;
 }
 
 export interface PlannerEngineRun {
@@ -47,6 +66,9 @@ export interface PlannerEngineRun {
   source: typeof PLANNER_ENGINE_SOURCE;
   startedAt: string;
   completedAt: string;
+  /** Identity of the exact JSON snapshot given to this request, before validation. */
+  inputSha256: string;
+  inputBytes: number;
   operation: 'calculate' | 'solve';
   outcome: 'ok' | PlannerEngineErrorCode;
   elapsedMs: number;
@@ -65,6 +87,7 @@ export interface PlannerEngineInfo {
   workerStarts: number;
   queued: number;
   limits: Required<PlannerEngineOptions>;
+  structuralLimits: typeof STRUCTURAL_LIMITS;
   lastRun?: PlannerEngineRun;
 }
 
@@ -74,6 +97,8 @@ interface Request {
   json: string;
   start: number;
   startedAt: string;
+  inputSha256: string;
+  inputBytes: number;
   timer: ReturnType<typeof setTimeout>;
   signal?: AbortSignal;
   abort: () => void;
@@ -92,7 +117,8 @@ export interface PlannerWorkerResponse {
 /**
  * Offline upstream calculator. The native English report is returned unchanged.
  * Inspect report.plan (including failure, forced flows and unmet drawers), not just
- * whether this Promise resolved. Backend/fallback information lives in info().lastRun.
+ * whether this Promise resolved. Use calculateDetailed for a saved per-request
+ * receipt; info().lastRun is only the latest status snapshot.
  *
  * const engine = new PlannerEngine();
  * try { const nativeReport = await engine.calculate(factoryProject); }
@@ -114,7 +140,7 @@ export class PlannerEngine {
     this.#limits = {
       timeoutMs: boundedInteger(options.timeoutMs ?? 30_000, 1, 120_000, 'timeoutMs'),
       maxQueued: boundedInteger(options.maxQueued ?? 2, 0, 8, 'maxQueued'),
-      maxInputBytes: boundedInteger(options.maxInputBytes ?? 8 * 1024 * 1024, 1024, 32 * 1024 * 1024, 'maxInputBytes'),
+      maxInputBytes: boundedInteger(options.maxInputBytes ?? DEFAULT_PLANNER_INPUT_BYTES, 1024, 32 * 1024 * 1024, 'maxInputBytes'),
       maxOutputBytes: boundedInteger(options.maxOutputBytes ?? 32 * 1024 * 1024, 1024, 64 * 1024 * 1024, 'maxOutputBytes'),
     };
   }
@@ -126,6 +152,10 @@ export class PlannerEngine {
   /** Per-request receipt for saved analyses; unlike info().lastRun it cannot be overwritten by the next job. */
   calculateDetailed(project: unknown, options: PlannerCalculateOptions = {}): Promise<PlannerEngineResult> {
     return this.#submit('calculate', project, options);
+  }
+
+  checkInput(value: unknown, operation: 'calculate' | 'solve' = 'calculate'): PlannerCheckedInput {
+    return checkPlannerInput(value, { maxInputBytes: this.#limits.maxInputBytes, operation });
   }
 
   /** Raw upstream SolveInput -> Answer. For corpus/independent numeric comparisons. */
@@ -145,6 +175,7 @@ export class PlannerEngine {
       workerStarts: this.#workerStarts,
       queued: this.#queue.length,
       limits: { ...this.#limits },
+      structuralLimits: STRUCTURAL_LIMITS,
       ...(this.#lastRun ? { lastRun: structuredClone(this.#lastRun) } : {}),
     };
   }
@@ -165,10 +196,11 @@ export class PlannerEngine {
     }
     const timeoutMs = boundedInteger(options.timeoutMs ?? this.#limits.timeoutMs, 1, 120_000, 'timeoutMs');
     const start = performance.now();
-    const json = encodePlannerJson(value, this.#limits.maxInputBytes);
+    const startedAt = new Date().toISOString();
+    const { json, inputSha256, inputBytes } = this.checkInput(value, operation);
     return new Promise((resolve, reject) => {
       const request: Request = {
-        id: ++this.#sequence, operation, json, start, startedAt: new Date().toISOString(), resolve, reject,
+        id: ++this.#sequence, operation, json, start, startedAt, inputSha256, inputBytes, resolve, reject,
         signal: options.signal,
         abort: () => this.#interrupt(request, 'aborted', 'Planner request was aborted.'),
         timer: setTimeout(() => this.#interrupt(request, 'timeout', `Planner request exceeded ${timeoutMs} ms.`),
@@ -243,6 +275,7 @@ export class PlannerEngine {
     else this.#queue = this.#queue.filter((queued) => queued !== request);
     const run: PlannerEngineRun = {
       id: request.id, source: PLANNER_ENGINE_SOURCE, startedAt: request.startedAt, completedAt: new Date().toISOString(),
+      inputSha256: request.inputSha256, inputBytes: request.inputBytes,
       operation: request.operation, outcome: error?.code ?? 'ok', elapsedMs: performance.now() - request.start,
       ...(diagnostics ? { diagnostics } : {}),
     };

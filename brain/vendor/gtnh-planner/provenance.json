@@ -15,7 +15,7 @@
     "copyright": [
       "2026 Sbancuz"
     ],
-    "purpose": "Independent machine-math comparison and common solver corpus; not a runtime dependency."
+    "purpose": "Pinned handlers.json catalog and MIT license; independent machine-math fixture sample and common solver corpus. No mod/JVM runtime dependency."
   },
   "packages": {
     "esbuild": {
@@ -38,11 +38,13 @@
     "dist/runtime.cjs",
     "dist/catalog.mjs",
     "dist/highs.wasm",
+    "limits.mjs",
+    "shape-budget.mjs",
     "mod/handlers.json"
   ],
   "modifications": [
-    "Upstream snapshots are byte-identical. Build-time lp-observability.json adds call counters and bounded failure messages; no mathematical changes.",
-    "Project-owned runtime-entry.ts adds upstream schema validation, reserved/duplicate identifier checks, and raw SolveInputJson validation.",
+    "Upstream snapshots are byte-identical. Build-time lp-observability.json adds call counters, bounded failure messages, and structural/LP budget checks; no mathematical changes.",
+    "Project-owned runtime-entry.ts validates with the upstream schema but calculates the exact original JSON (not its field-stripped/rounded parse result); additionally validates integer parallel, profile.kind, positive plan seeds/pins, reserved/duplicate identifiers, and raw SolveInputJson. budget.ts caps graph structure, LP dimensions/nonzeros/dense cells, and simplex tableau cells before allocation.",
     "Node worker requires HiGHS to initialize, supplies an import.meta.url-relative WASM path, and never fetches assets.",
     "types/model.d.ts converts the two numeric constants into ambient declarations and rewrites the sole type import to ./plan-types.js; types/plan-types.d.ts is verbatim upstream."
   ],
@@ -50,10 +52,26 @@
     "command": "node brain/vendor/gtnh-planner/generate.mjs --tools /path/to/isolated-toolchain",
     "lockfile": "toolchain/package-lock.json",
     "sourceHashes": "source-files.json",
+    "inputHashes": {
+      "generate.mjs": "fa95dfd44b0a300397273fafa55ba7532acf34dfb48000b507847305ca1a8092",
+      "runtime-entry.ts": "704ee9b31d28e4aa4368cc5771bcd4f05db86a3fb03e9db4e9bcb8c727b1d8c0",
+      "catalog-entry.ts": "24dab312d38358f015e8d195c4b1559893aecb5b704892707b44392de3d68a9e",
+      "test-entry.ts": "fc9e0776532d1a96a61bb073f719264dfbc6f4d4274c46d0fea1eff5f9139c58",
+      "budget.ts": "c5cdd1347b4544e950af4f674345d2e6c781baa79c89a854b51d80b1459cc499",
+      "limits.mjs": "d661309fe1200cf73e9d9fbb5dbd723d959514673d00489710a435094640eee2",
+      "limits.d.mts": "edd94ee004c4c8f626a5b3731139762ca6c994b0790229ec6d8e4cd15a66ea17",
+      "shape-budget.mjs": "8124ced4825064e0a5c3e16a740b5f248bed0243191d0ed35eee7cdba7a77dd8",
+      "shape-budget.d.mts": "7f219607f5b65f98a18076fe59adf0e870cf4bbccdde12fe49fea65a8c493f28",
+      "package.json": "04a4312cf87fdceac8ad330588726de9e5a208e8d6d7d05cef8c5f74a68f9cd7",
+      "lp-observability.json": "3cccbc6313afa861efce332c7ba4a771003294f37bf5f7fe13bd1f991c60f1b8",
+      "dist/catalog.d.mts": "277f81ab357a1ec0a5d3c654c91a633059eacae328ad8818f87b31c129322f47",
+      "toolchain/package.json": "83b0a2f3e7827d4e224ca1e8a1b5b7b7552e229503edb7f7824adbd0873b511e",
+      "toolchain/package-lock.json": "4de41254c285b32b53a70fc4fcdecab05173f9191bc84903b4c2ae147d0918a1"
+    },
     "outputHashes": {
-      "dist/runtime.cjs": "bcc5e162a72bcc682349db72bcad3184fa9c4706784646921ba6e908593fb8dd",
+      "dist/runtime.cjs": "ebc207a292ddf3eca6e6c1c2c2995d418608ed4601772eb7f62764b4f1dba0b6",
       "dist/test-support.cjs": "4a9c6810a3399c1fa88e2934eedf0b625833fdaa65e892200f34180759a00e01",
-      "dist/catalog.mjs": "3f83898c7745f8e83fdadfcbb60504b445a9f52681dd54a0ec0dc09a71456728",
+      "dist/catalog.mjs": "0cc9cfdce27a5aa7aa4fcb7ae1d5e2d873d849558eaf8a852759468e2f6cd90d",
       "dist/highs.wasm": "7e6432b2b26f4fab9f6d9bac55da43307c7a4b1b071cb204cb4d23e1901bc4d0",
       "types/model.d.ts": "e174e0c0321200a3004aea7d5010bf5082a4e614d9212e4109e69779df46316e",
       "types/plan-types.d.ts": "309108501828d431d0e3fa6ee0760db6e89bb0d6c8fc2e325b2f809f3298b090",
@@ -61,6 +79,8 @@
     }
   },
   "runtimeInputs": [
+    "budget.ts",
+    "limits.mjs",
     "node_modules/highs/build/highs.js",
     "node_modules/zod/index.js",
     "node_modules/zod/v4/classic/checks.js",
@@ -142,6 +162,7 @@
     "node_modules/zod/v4/locales/zh-CN.js",
     "node_modules/zod/v4/locales/zh-TW.js",
     "runtime-entry.ts",
+    "shape-budget.mjs",
     "upstream/src/components/flow/resource-handles.ts",
     "upstream/src/lib/machines/bacterial-vat.ts",
     "upstream/src/lib/machines/data/bio-vat.json",

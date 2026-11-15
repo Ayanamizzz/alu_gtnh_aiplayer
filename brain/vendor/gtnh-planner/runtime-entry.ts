@@ -4,9 +4,11 @@ import { factoryProjectSchema } from './upstream/src/lib/model/schemas';
 import type { FactoryProject } from './upstream/src/lib/model/types';
 import { calculateThroughput } from './upstream/src/lib/solver/throughput';
 import { solvePlan } from './upstream/src/lib/solver/plan/solve-plan';
-import { initLpEngine, activeLpEngine, resetLpDiagnostics, getLpDiagnostics } from './upstream/src/lib/solver/lp-engine';
+import { initLpEngine, activeLpEngine, resetLpDiagnostics as resetUpstreamDiagnostics, getLpDiagnostics } from './upstream/src/lib/solver/lp-engine';
+import { checkProjectBudget, checkSolveBudget, resetBudget, throwIfBudgetExceeded } from './budget';
 
-export { activeLpEngine, resetLpDiagnostics, getLpDiagnostics };
+export { activeLpEngine, getLpDiagnostics };
+export function resetLpDiagnostics(): void { resetUpstreamDiagnostics(); resetBudget(); }
 export async function initialize(wasmPath: string): Promise<void> {
   if (!await initLpEngine({ wasmUrl: wasmPath })) {
     throw new Error('Bundled HiGHS WASM could not be initialized. No simplex-only service is started.');
@@ -28,11 +30,32 @@ function checkIds(groups: { id: string }[][]): void {
 }
 
 export function calculateNative(raw: unknown): unknown {
-  const project = factoryProjectSchema.parse(raw) as FactoryProject;
+  // Validate, but do not calculate from Zod's stripped/transformed object: the
+  // upstream schema lags native fields such as machineProfile.kind. The worker
+  // already supplies a bounded plain-JSON snapshot, so retain its exact values.
+  factoryProjectSchema.parse(raw);
+  const project = raw as FactoryProject;
+  for (const node of project.nodes) {
+    z.number().int().positive().parse(node.parallel);
+    // The original plan finalizer divides by the seed count, and its pin parser
+    // treats zero as absent. Reject ambiguous zero constraints rather than promise them.
+    if (project.planMode && node.enabled) {
+      z.number().positive('Plan-mode machineCount seed must be positive.').parse(node.machineCount);
+      if (node.solvePin !== undefined) z.number().positive('Use an unpinned or disabled node instead of solvePin: 0.').parse(node.solvePin);
+    }
+  }
+  for (const recipe of project.recipes) {
+    if (recipe.machineProfile?.kind !== undefined) z.enum(['single', 'multiblock', 'crafting', 'automation']).parse(recipe.machineProfile.kind);
+  }
   checkIds([project.nodes, project.storages ?? []]);
   checkIds([project.recipes]);
   checkIds([project.edges]);
-  return calculateThroughput(project);
+  checkProjectBudget(project);
+  const result = calculateThroughput(project);
+  // The native adapter catches solver exceptions into a report. Policy limits
+  // must still be explicit engine errors, not a normal completed calculation.
+  throwIfBudgetExceeded();
+  return result;
 }
 
 // The raw comparison entry accepts the mod's SolveInputJson format. Float chances
@@ -65,5 +88,8 @@ export function solveNative(raw: unknown): unknown {
   const input = solveInputSchema.parse(raw);
   checkIds([input.machines, input.drawers]);
   checkIds([input.edges]);
-  return solvePlan(input);
+  checkSolveBudget(input);
+  const result = solvePlan(input);
+  throwIfBudgetExceeded();
+  return result;
 }

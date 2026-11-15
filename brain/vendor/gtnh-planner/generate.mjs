@@ -2,17 +2,21 @@
 /**
  * Reproducible, local-only build (Node 24). No installation or download here.
  * Prepare a separate tools directory with the committed toolchain/package-lock.json:
+ *   mkdir -p /tmp/planner-tools
+ *   cp brain/vendor/gtnh-planner/toolchain/package{,-lock}.json /tmp/planner-tools/
  *   npm ci --prefix /tmp/planner-tools --ignore-scripts
  *   node brain/vendor/gtnh-planner/generate.mjs --tools /tmp/planner-tools
  * To refresh the exact source closure, additionally pass --upstream /path/to/clone.
  * The clone must be clean and pinned to SOURCE_COMMIT; it is never modified.
+ * Refresh mod catalog/test samples with --mod /path/to/mod-clone (fixed MOD_COMMIT).
  */
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { gunzipSync } from 'node:zlib';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const SOURCE_COMMIT = 'e493e36a64d5a226e6110fab8a765ae08c3bf7c5';
@@ -35,8 +39,32 @@ if (mod) {
   await mkdir(join(root, 'mod'), { recursive: true });
   await cp(join(mod, 'src/main/resources/assets/gtnhplanner/machines/handlers.json'), join(root, 'mod/handlers.json'));
   await cp(join(mod, 'LICENSE'), join(root, 'mod/LICENSE'));
+  const goldenPath = 'src/test/resources/machine-goldens.jsonl.gz';
+  const goldenBytes = await readFile(join(mod, goldenPath));
+  const sampleGroups = new Set(['map:Assembler', 'map:Blast Furnace', 'map:Alloy Smelter', 'map:Chemical Plant', 'map:Large Chemical Reactor', 'map:Pyrolyse Oven', 'map:Distillation Tower', 'map:Oil Cracker', 'neutron-activator', 'precise-assembler', 'fusion', 'eec', 'vat', 'tgs']);
+  const samples = [];
+  const picked = new Set();
+  const recipes = new Map();
+  for (const line of gunzipSync(goldenBytes).toString('utf8').split('\n')) {
+    if (!line.trim()) continue;
+    const entry = JSON.parse(line);
+    if (entry.recipe) recipes.set(entry.recipeId, entry.recipe);
+    if (!sampleGroups.has(entry.group) || entry.expected.powerState !== 'ok') continue;
+    const flags = { baseline: true, normal: entry.expected.overclockSteps > entry.expected.perfectOverclockSteps,
+      perfect: entry.expected.perfectOverclockSteps > 0, parallel: entry.expected.parallels > 1,
+      configured: Object.keys(entry.node.machineConfigTiers ?? {}).length > 0 };
+    const reasons = Object.entries(flags).filter(([key, matches]) => matches && !picked.has(`${entry.group}:${key}`)).map(([key]) => key);
+    if (!reasons.length) continue;
+    for (const key of reasons) picked.add(`${entry.group}:${key}`);
+    samples.push({ ...entry, recipe: recipes.get(entry.recipeId), selectedFor: reasons });
+  }
+  await writeFile(join(root, 'mod/machine-goldens-sample.json'), JSON.stringify({
+    source: { path: goldenPath, commit: MOD_COMMIT, sha256: hash(goldenBytes) },
+    selection: 'First powerState=ok case per listed group and baseline/normal/perfect/parallel/configured condition; expected values unchanged.',
+    cases: samples,
+  }, null, 2) + '\n');
   const hashes = {};
-  for (const file of ['mod/handlers.json', 'mod/LICENSE']) hashes[file] = hash(await readFile(join(root, file)));
+  for (const file of ['mod/handlers.json', 'mod/LICENSE', 'mod/machine-goldens-sample.json']) hashes[file] = hash(await readFile(join(root, file)));
   await writeFile(join(root, 'mod-files.json'), JSON.stringify(hashes, null, 2) + '\n');
 }
 const upstream = option('--upstream');
@@ -100,6 +128,8 @@ await mkdir(join(root, 'dist'), { recursive: true });
 const common = {
   absWorkingDir: root, bundle: true, platform: 'node', target: 'node24', format: 'cjs',
   minify: false, legalComments: 'inline', charset: 'utf8', metafile: true,
+  // Do not inherit a host project's tsconfig or module/interoperability settings.
+  tsconfigRaw: { compilerOptions: { target: 'ESNext', module: 'ESNext', alwaysStrict: true, verbatimModuleSyntax: true, useDefineForClassFields: true } },
   nodePaths: [modules], alias: { '@': join(snapshot, 'src') },
   plugins: [{ name: 'observable-upstream-lp', setup(build) {
     build.onLoad({ filter: /\/solver\/lp-engine\.ts$/ }, async ({ path }) => {
@@ -135,6 +165,7 @@ for (const file of ['dist/runtime.cjs', 'dist/test-support.cjs', 'dist/catalog.m
   await writeFile(join(root, file), text.replaceAll(packagePrefix, 'node_modules/'));
 }
 await cp(join(modules, 'highs/build/highs.wasm'), join(root, 'dist/highs.wasm'));
+await chmod(join(root, 'dist/highs.wasm'), 0o644);
 await mkdir(join(root, 'licenses'), { recursive: true });
 await cp(join(snapshot, 'LICENSE'), join(root, 'licenses/gtnh-factory-flow-MIT.txt'));
 for (const name of Object.keys(VERSIONS)) {
@@ -144,13 +175,17 @@ for (const name of Object.keys(VERSIONS)) {
 }
 const outputHashes = {};
 for (const file of ['dist/runtime.cjs', 'dist/test-support.cjs', 'dist/catalog.mjs', 'dist/highs.wasm', 'types/model.d.ts', 'types/plan-types.d.ts', 'types/machine-behaviour.d.ts']) outputHashes[file] = hash(await readFile(join(root, file)));
+const buildInputHashes = {};
+for (const file of ['generate.mjs', 'runtime-entry.ts', 'catalog-entry.ts', 'test-entry.ts', 'budget.ts', 'limits.mjs', 'limits.d.mts', 'shape-budget.mjs', 'shape-budget.d.mts', 'package.json', 'lp-observability.json', 'dist/catalog.d.mts', 'toolchain/package.json', 'toolchain/package-lock.json']) {
+  buildInputHashes[file] = hash(await readFile(join(root, file)));
+}
 const provenance = {
   upstream: { url: 'https://github.com/jackwrichards/gtnh-factory-flow', commit: SOURCE_COMMIT, license: 'MIT', copyright: ['2026 Samiracle64', '2026 jackwrichards'] },
-  referenceMod: { url: 'https://github.com/jackwrichards/gtnh-planner-mod', commit: MOD_COMMIT, license: 'MIT', copyright: ['2026 Sbancuz'], purpose: 'Independent machine-math comparison and common solver corpus; not a runtime dependency.' },
+  referenceMod: { url: 'https://github.com/jackwrichards/gtnh-planner-mod', commit: MOD_COMMIT, license: 'MIT', copyright: ['2026 Sbancuz'], purpose: 'Pinned handlers.json catalog and MIT license; independent machine-math fixture sample and common solver corpus. No mod/JVM runtime dependency.' },
   packages: { esbuild: { version: VERSIONS.esbuild, role: 'build only', license: 'MIT' }, highs: { version: VERSIONS.highs, role: 'bundled runtime JS and WASM', license: 'MIT' }, zod: { version: VERSIONS.zod, role: 'bundled runtime validation', license: 'MIT' } },
-  runtime: ['dist/runtime.cjs', 'dist/catalog.mjs', 'dist/highs.wasm', 'mod/handlers.json'],
-  modifications: ['Upstream snapshots are byte-identical. Build-time lp-observability.json adds call counters and bounded failure messages; no mathematical changes.', 'Project-owned runtime-entry.ts adds upstream schema validation, reserved/duplicate identifier checks, and raw SolveInputJson validation.', 'Node worker requires HiGHS to initialize, supplies an import.meta.url-relative WASM path, and never fetches assets.', 'types/model.d.ts converts the two numeric constants into ambient declarations and rewrites the sole type import to ./plan-types.js; types/plan-types.d.ts is verbatim upstream.'],
-  build: { command: 'node brain/vendor/gtnh-planner/generate.mjs --tools /path/to/isolated-toolchain', lockfile: 'toolchain/package-lock.json', sourceHashes: 'source-files.json', outputHashes },
+  runtime: ['dist/runtime.cjs', 'dist/catalog.mjs', 'dist/highs.wasm', 'limits.mjs', 'shape-budget.mjs', 'mod/handlers.json'],
+  modifications: ['Upstream snapshots are byte-identical. Build-time lp-observability.json adds call counters, bounded failure messages, and structural/LP budget checks; no mathematical changes.', 'Project-owned runtime-entry.ts validates with the upstream schema but calculates the exact original JSON (not its field-stripped/rounded parse result); additionally validates integer parallel, profile.kind, positive plan seeds/pins, reserved/duplicate identifiers, and raw SolveInputJson. budget.ts caps graph structure, LP dimensions/nonzeros/dense cells, and simplex tableau cells before allocation.', 'Node worker requires HiGHS to initialize, supplies an import.meta.url-relative WASM path, and never fetches assets.', 'types/model.d.ts converts the two numeric constants into ambient declarations and rewrites the sole type import to ./plan-types.js; types/plan-types.d.ts is verbatim upstream.'],
+  build: { command: 'node brain/vendor/gtnh-planner/generate.mjs --tools /path/to/isolated-toolchain', lockfile: 'toolchain/package-lock.json', sourceHashes: 'source-files.json', inputHashes: buildInputHashes, outputHashes },
   runtimeInputs: Object.keys(result.metafile.inputs).map((file) => file.includes('node_modules/') ? file.slice(file.lastIndexOf('node_modules/')) : file).sort(),
 };
 await writeFile(join(root, 'provenance.json'), JSON.stringify(provenance, null, 2) + '\n');

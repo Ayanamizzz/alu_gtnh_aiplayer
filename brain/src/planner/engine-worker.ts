@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { parentPort } from 'node:worker_threads';
@@ -21,10 +23,18 @@ const port = parentPort;
 if (!port) throw new Error('Planner calculator must run in a worker thread.');
 let runtime: Runtime | undefined;
 let initialization: Promise<Runtime> | undefined;
+let assetHashes: { runtimeSha256: string; wasmSha256: string } | undefined;
+function diagnostics(): PlannerEngineDiagnostics {
+  return { ...runtime!.getLpDiagnostics(), ...assetHashes };
+}
 function load(): Promise<Runtime> {
   initialization ??= (async () => {
-    const bundled = createRequire(import.meta.url)('../../vendor/gtnh-planner/dist/runtime.cjs') as Runtime;
-    await bundled.initialize(fileURLToPath(new URL('../../vendor/gtnh-planner/dist/highs.wasm', import.meta.url)));
+    const runtimeUrl = new URL('../../vendor/gtnh-planner/dist/runtime.cjs', import.meta.url);
+    const wasmUrl = new URL('../../vendor/gtnh-planner/dist/highs.wasm', import.meta.url);
+    const sha256 = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex');
+    assetHashes = { runtimeSha256: sha256(await readFile(runtimeUrl)), wasmSha256: sha256(await readFile(wasmUrl)) };
+    const bundled = createRequire(import.meta.url)(fileURLToPath(runtimeUrl)) as Runtime;
+    await bundled.initialize(fileURLToPath(wasmUrl));
     runtime = bundled;
     return bundled;
   })();
@@ -49,14 +59,14 @@ port.on('message', async (request: WorkerRequest) => {
     } else {
       response = { id: request.id, ok: true, json };
     }
-    response.diagnostics = engine.getLpDiagnostics();
+    response.diagnostics = diagnostics();
   } catch (error) {
     const name = error instanceof Error ? error.name : '';
-    const code: PlannerEngineErrorCode = !runtime ? 'unavailable' : name === 'ZodError' || name === 'ValidationError' ? 'invalid' : 'error';
+    const code: PlannerEngineErrorCode = !runtime ? 'unavailable' : name === 'PlannerLimitError' ? 'limit' : name === 'ZodError' || name === 'ValidationError' ? 'invalid' : 'error';
     response = {
       id: request.id, ok: false,
       error: { code, message: (error instanceof Error ? error.message : String(error)).slice(0, 4000) },
-      ...(runtime ? { diagnostics: runtime.getLpDiagnostics() } : {}),
+      ...(runtime ? { diagnostics: diagnostics() } : {}),
     };
   }
   port.postMessage(response);
