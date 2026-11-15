@@ -80,6 +80,13 @@ function products(raw: Record<string, unknown>): unknown {
 const READ_CHUNK = 8 << 20
 const EMPTY: readonly number[] = []
 
+function sourceIdentity(stat: fs.Stats): string {
+  return `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`
+}
+function fileIdentity(file: string): string | undefined {
+  try { return sourceIdentity(fs.statSync(file)) } catch { return undefined }
+}
+
 function count(v: unknown): number {
   return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 1
 }
@@ -174,6 +181,7 @@ export class RecipeBook {
   private readonly fluidNames: Map<string, string>
   private readonly byKey: Map<string, RecipeHandler>
   private buffer = Buffer.allocUnsafe(64 * 1024)
+  private readonly loadedSource: { dir: string; recipes: string; handlers: string | undefined }
 
   /**
    * 读 dir 里的 handlers.json 和 recipes.jsonl，建好索引。recipes.jsonl 不在时返回 undefined；读不了时抛错。
@@ -183,6 +191,7 @@ export class RecipeBook {
     const file = path.join(dir, 'recipes.jsonl')
     if (!fs.existsSync(file)) return undefined
     const started = performance.now()
+    const handlersIdentity = fileIdentity(path.join(dir, 'handlers.json'))
     const handlers: RecipeHandler[] = []
     const index = new Map<string, number>()
     try {
@@ -253,6 +262,7 @@ export class RecipeBook {
     }
 
     const fd = fs.openSync(file, 'r')
+    const recipesIdentity = sourceIdentity(fs.fstatSync(fd))
     try {
       const chunk = Buffer.allocUnsafe(READ_CHUNK)
       let carry: Buffer | undefined
@@ -280,7 +290,7 @@ export class RecipeBook {
       fs.closeSync(fd)
       throw e
     }
-    const book = new RecipeBook(fd, handlers, Uint32Array.from(offsets), Uint32Array.from(lengths), Uint16Array.from(handlerOf), makes, used, fake, { makes: fluidMakes, used: fluidUsed, names: fluidNames })
+    const book = new RecipeBook(fd, handlers, Uint32Array.from(offsets), Uint32Array.from(lengths), Uint16Array.from(handlerOf), makes, used, fake, { makes: fluidMakes, used: fluidUsed, names: fluidNames }, { dir: path.resolve(dir), recipes: recipesIdentity, handlers: handlersIdentity })
     return { book, bad, ms: Math.round(performance.now() - started) }
   }
 
@@ -294,8 +304,10 @@ export class RecipeBook {
     used: Map<string, number[]>,
     fake: number,
     fluids: { makes: Map<string, number[]>; used: Map<string, number[]>; names: Map<string, string> },
+    loadedSource: { dir: string; recipes: string; handlers: string | undefined },
   ) {
     this.fd = fd
+    this.loadedSource = loadedSource
     this.handlers = handlers
     this.offsets = offsets
     this.lengths = lengths
@@ -308,6 +320,12 @@ export class RecipeBook {
     this.fake = fake
     this.size = offsets.length
     this.byKey = new Map(handlers.map((h) => [h.key, h]))
+  }
+
+  /** Planner snapshots must not mix this loaded fd/index with files replaced by a later export. No hot reload. */
+  isSourceCurrent(): boolean {
+    return fileIdentity(path.join(this.loadedSource.dir, 'recipes.jsonl')) === this.loadedSource.recipes
+      && fileIdentity(path.join(this.loadedSource.dir, 'handlers.json')) === this.loadedSource.handlers
   }
 
   handler(key: string): RecipeHandler | undefined {

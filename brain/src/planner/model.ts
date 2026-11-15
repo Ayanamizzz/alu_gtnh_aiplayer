@@ -2,6 +2,7 @@
 // e493e36a64d5a226e6110fab8a765ae08c3bf7c5, MIT. No translated planning schema.
 import type { PlanSolveExtras } from './native-plan-types.ts';
 import type { Recipe as LocalRecipe } from '../packdata/recipes.ts';
+import type { NodePowerReport, NodeSteamReport } from '../../vendor/gtnh-planner/dist/catalog.mjs';
 
 export const PROJECT_SCHEMA_VERSION = 1;
 export const TICKS_PER_SECOND = 20;
@@ -1274,6 +1275,20 @@ export interface GoalAssessment {
   met: boolean;
   resourceKey?: string;
 }
+export interface MachineEnergyAssessment {
+  sections: Array<{
+    nodeId: string;
+    power: NodePowerReport;
+    steam?: NodeSteamReport;
+    cardParallel: number;
+    perMachineRunningEuT: number;
+    perMachineSteamMbPerSecond: number;
+  }>;
+  averageEuT: number;
+  buildPeakEuT: number;
+  averageSteamMbPerSecond: number;
+  buildPeakSteamMbPerSecond: number;
+}
 export interface MachineAssessment {
   nodeId: string;
   sections: string[];
@@ -1282,7 +1297,9 @@ export interface MachineAssessment {
   shared: boolean;
   capacity?: number;
   capacityExceeded: boolean;
+  /** Load-weighted average; native Build node.euT remains nameplate in nativeReport. */
   euT: number;
+  energy?: MachineEnergyAssessment;
 }
 export interface ReportSummary {
   status: 'satisfied' | 'needs-external-supply' | 'unmet' | 'infeasible' | 'unanchored' | 'invalid' | 'failed';
@@ -1296,7 +1313,12 @@ export interface ReportSummary {
   shortfalls: unknown[];
   issues: PlannerIssue[];
   assumptions: string[];
+  /** Unmodified native total (Build: nameplate; Solve/Plan: scaled). */
   totalEuT?: number;
+  averageEuT?: number;
+  buildPeakEuT?: number;
+  averageSteamMbPerSecond?: number;
+  buildPeakSteamMbPerSecond?: number;
   staticAnalysis: true;
 }
 

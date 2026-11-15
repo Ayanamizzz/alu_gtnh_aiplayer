@@ -112,10 +112,20 @@ function describeOne(packdata: PackData, local: LocalRecipe, options: DescribeOp
   const issues: PlannerIssue[] = []
   const add = (severity: PlannerIssue['severity'], code: string, message: string) => issues.push({ severity, code, message, recipeId: id })
   const map = recipeMapFor(local.handler.key)
+  // NeiExport omits a GT mSpecialValue of zero. This is an observed zero, not missing metadata.
+  const special = local.special ?? (local.handler.gregtech ? 0 : undefined)
   if (!local.handler.gregtech || !Number.isInteger(local.ticks) || (local.ticks ?? 0) <= 0 || !Number.isFinite(local.eut) || (local.eut ?? 0) < 0) {
     add('error', 'MISSING_RECIPE_MATH', 'The local export has no complete positive durationTicks and EU/t baseline for this recipe. No generic speed is assumed.')
   }
   if (!map) add('error', 'MISSING_MACHINE_MAP', `No authoritative machine map for local handler ${local.handler.key}.`)
+  // NeiExport.stack writes name only for a tagged stack whose name differs from the
+  // canonical item table. Handler/fluid/item-table names are ordinary labels, not this signal.
+  const instanced = [...local.in.filter((s): s is Extract<RecipeSlot, { kind: 'item' }> => s.kind === 'item'), ...local.out].filter(s => {
+    if (!s.name) return false
+    const known = packdata.items?.get(s.id, s.meta)
+    return s.name !== known?.name && s.name !== known?.en
+  })
+  if (instanced.length) add('error', 'MISSING_ITEM_INSTANCE_DATA', `Exported per-stack names identify NBT-distinct instances but the NBT identity/matching data is absent: ${instanced.map(s => `${itemResourceId(s.id, s.meta)} (${s.name})`).join(', ')}. They cannot be verified as one registry/meta resource. Keep the snapshot; removing metadata.localBinding explicitly declares an unverified assumption instead.`)
   const rawOutputs = Array.isArray(snapshot.raw.out) ? snapshot.raw.out : []
   if (rawOutputs.some(o => !isRecord(o) || typeof o.id !== 'string')) add('error', 'UNSUPPORTED_OUTPUT_VARIANTS', 'Some exported outputs are choice groups rather than concrete stacks. Their full raw data is retained; a native output cannot be guessed.')
   const recipe: Recipe = {
@@ -131,7 +141,7 @@ function describeOne(packdata: PackData, local: LocalRecipe, options: DescribeOp
         displayName: packdata.items?.get(stack.id, stack.meta)?.en ?? stack.id, ...(chance !== undefined ? { chance } : {}) }
     }),
     ...local.fout.map(fluid => ({ kind: 'fluid' as const, id: fluid.f, amount: fluid.mb, displayName: fluid.f }))],
-    ...(local.special !== undefined ? { specialValue: local.special, nei: { additionalInfo: [`Special value: ${local.special}`] } } : {}),
+    ...(special !== undefined ? { specialValue: special, nei: { additionalInfo: [`Special value: ${special}`] } } : {}),
     source: { recipeMap: map?.name ?? local.handler.key, rawRecipeId: String(ref), sourceIdentifier: local.handler.key, exporter: 'unknown' },
     metadata: { localHandler: local.handler.key, localFake: local.fake === true },
   }
@@ -161,6 +171,7 @@ function describeOne(packdata: PackData, local: LocalRecipe, options: DescribeOp
 export function describeRecipes(packdata: PackData | undefined, refs: readonly number[], options: DescribeOptions = {}): DescribeResult {
   const result: DescribeResult = { recipes: [], issues: [], catalogVersion: CATALOG_VERSION }
   if (!packdata?.recipes) { result.issues.push({ severity: 'error', code: 'NO_LOCAL_RECIPES', message: 'Local packdata recipes are not loaded.' }); return result }
+  if (!packdata.recipes.isSourceCurrent()) { result.issues.push({ severity: 'error', code: 'PACKDATA_RELOAD_REQUIRED', message: 'Recipe export files changed since RecipeBook was loaded. Restart/reload packdata before describing local bindings; no hot reload is performed.' }); return result }
   const dataset = datasetFingerprint(packdata)
   for (const ref of refs) {
     const local = packdata.recipes.get(ref)
@@ -207,7 +218,10 @@ export function prepareProject(packdata: PackData | undefined, value: unknown, o
     const used = new Set<string>()
     entries.forEach((entry, i) => {
       if (!isRecord(entry) || typeof entry.id !== 'string' || !entry.id || used.has(entry.id)) error('INVALID_ID', `${label} ids must be nonempty and unique.`, `${label}[${i}]`)
-      else used.add(entry.id)
+      else {
+        used.add(entry.id)
+        if (['__proto__', 'constructor', 'prototype'].includes(entry.id) || label === 'nodes/storages' && (/^(?:hatch-supply:|pool:|pool-tank:)/.test(entry.id) || /#r\d+$|[|\u0000-\u001f]/.test(entry.id)) || label === 'edges' && (/^(?:pool-edge:|hatch-supply:|boundary-edge-)/.test(entry.id) || entry.id.includes('>'))) error('RESERVED_GRAPH_ID', `${entry.id} is reserved for native expanded/hidden graph entities. Choose another user entity id.`, `${label}[${i}]`)
+      }
     })
   }
   ids(project.recipes, 'recipes'); ids([...project.nodes, ...(project.storages ?? [])], 'nodes/storages'); ids(project.edges, 'edges')
@@ -216,11 +230,14 @@ export function prepareProject(packdata: PackData | undefined, value: unknown, o
     else for (const output of recipe.outputs) if (output.chance !== undefined && (typeof output.chance !== 'number' || output.chance < 0 || output.chance > 1)) error('INVALID_CHANCE', 'Output chance must be between 0 and 1.', `recipes[${i}]`)
   }
   for (const [i, node] of project.nodes.entries()) {
-    if (!isRecord(node) || typeof node.recipeId !== 'string' || typeof node.enabled !== 'boolean' || typeof node.overclockTier !== 'string' || typeof node.machineCount !== 'number' || node.machineCount < 0 || typeof node.parallel !== 'number' || node.parallel < 1 || !isRecord(node.position) || typeof node.position.x !== 'number' || typeof node.position.y !== 'number' || (node.extraRecipes !== undefined && (!Array.isArray(node.extraRecipes) || node.extraRecipes.some(e => !isRecord(e) || typeof e.recipeId !== 'string')))) error('INVALID_NODE', 'Node requires recipeId, enabled, machineCount >= 0, parallel >= 1, overclockTier and position.', `nodes[${i}]`)
+    if (!isRecord(node) || typeof node.recipeId !== 'string' || typeof node.enabled !== 'boolean' || typeof node.overclockTier !== 'string' || typeof node.machineCount !== 'number' || node.machineCount < 0 || !Number.isInteger(node.parallel) || node.parallel < 1 || !isRecord(node.position) || typeof node.position.x !== 'number' || typeof node.position.y !== 'number' || (node.extraRecipes !== undefined && (!Array.isArray(node.extraRecipes) || node.extraRecipes.some(e => !isRecord(e) || typeof e.recipeId !== 'string')))) error('INVALID_NODE', 'Node requires recipeId, enabled, machineCount >= 0, integer parallel >= 1, overclockTier and position.', `nodes[${i}]`)
   }
   for (const [i, storage] of (project.storages ?? []).entries()) if (!isRecord(storage) || !kinds.has(String(storage.kind)) || typeof storage.resourceId !== 'string') error('INVALID_STORAGE', 'Storage requires resource kind and resourceId.', `storages[${i}]`)
   for (const [i, edge] of project.edges.entries()) if (!isRecord(edge) || typeof edge.source !== 'string' || typeof edge.target !== 'string' || !kinds.has(String(edge.resourceKind)) || typeof edge.resourceId !== 'string') error('INVALID_EDGE', 'Edge requires source/target and resourceKind/resourceId.', `edges[${i}]`)
   if (issues.some(i => i.severity === 'error')) return result
+  if (packdata?.recipes && !packdata.recipes.isSourceCurrent() && project.recipes.some(recipe => recipe.metadata?.localBinding !== undefined)) {
+    error('PACKDATA_RELOAD_REQUIRED', 'Recipe export files changed since the loaded RecipeBook fd/index. Restart/reload packdata before verifying local bindings.'); return result
+  }
   for (const recipe of project.recipes) {
     const binding = bindingOf(recipe)
     if (!binding) {
@@ -261,7 +278,11 @@ export function prepareProject(packdata: PackData | undefined, value: unknown, o
     for (const [section, recipeId] of [node.recipeId, ...(node.extraRecipes ?? []).map(s => s.recipeId)].entries()) {
       const r = recipes.get(recipeId)
       if (!r) { error('MISSING_RECIPE', `Node ${node.id} section ${section} references missing recipe ${recipeId}.`); continue }
-      if (section > 0 && sharedHandler && !getRecipeMachineHandlers(r).some(h => h.id === sharedHandler.id)) error('SHARED_MACHINE_MISMATCH', `Node ${node.id}: section ${section} cannot run on the primary section's ${sharedHandler.id} machine.`)
+      if (section > 0 && sharedHandler) {
+        const handlers = getRecipeMachineHandlers(r)
+        if (!handlers.some(h => h.id === sharedHandler.id)) error('SHARED_MACHINE_MISMATCH', `Node ${node.id}: section ${section} cannot run on the primary section's ${sharedHandler.id} machine.`)
+        else if (!node.machineHandlerId && handlers[0]?.id !== sharedHandler.id) error('AMBIGUOUS_SHARED_MACHINE', `Node ${node.id}: sections have different native default machines. Set machineHandlerId explicitly to a handler shared by every section before sharing its capacity.`)
+      }
       if (bindingOf(r)) issues.push(...validateMachineSettings(r, { ...node, machineHandlerId: sharedHandler?.id ?? node.machineHandlerId }))
       const overrides = section === 0 ? node.recipeInputOverrides : node.extraRecipes?.[section - 1]?.recipeInputOverrides
       for (const [key, override] of Object.entries(overrides ?? {})) {
@@ -273,13 +294,14 @@ export function prepareProject(packdata: PackData | undefined, value: unknown, o
     }
     if (node.solvePin !== undefined && (typeof node.solvePin !== 'number' || node.solvePin < 0)) error('INVALID_PIN', `Node ${node.id}: solvePin must be nonnegative.`)
     if (node.solvePinExact && node.solvePin !== undefined && (node.targetOutput || Object.keys(node.portRates ?? {}).length)) error('COUNT_PIN_TARGET_CONFLICT', `Node ${node.id}: native target/port pins override an Exactly count. For a hard capacity use solvePin with solvePinExact:false (native Up-to pool) and a product storage target.`)
-    if (node.solvePin === 0 && !node.solvePinExact) error('ZERO_UP_TO_CAPACITY', `Node ${node.id}: upstream omits zero-capacity Up-to pools. Use enabled:false or an Exactly zero count without port targets.`)
+    if (node.solvePin === 0) error('ZERO_MACHINE_PIN', `Node ${node.id}: upstream ignores zero solvePin, including Exactly zero. Remove/disable this node and calculate again; zero is not a hard capacity.`)
+    if (node.enabled && node.machineCount === 0 && (project.planMode || project.solveMode || project.poolMode)) error('ZERO_NAMEPLATE_SEED', `Node ${node.id}: a zero machineCount seed can yield solved production with zero reported power. Use machineCount:1 as the calculation baseline (not a machine limit), and solvePin for capacity.`)
     if ((project.planMode || project.solveMode || project.poolMode) && node.solvePin === undefined) issues.push({ severity: 'info', code: 'COUNT_NOT_CAPACITY', nodeId: node.id, message: 'machineCount is a nameplate seed, not a hard planning capacity. Set solvePin (Up to) for a native capacity pool.' })
     if (project.planMode && node.targetOutput) issues.push({ severity: 'warning', code: 'LEGACY_NODE_TARGET', nodeId: node.id, message: 'Plan mode uses portRates and product storage targets. targetOutput is a legacy mode field; use native portRates for an exact port pin.' })
     for (const [handle, rate] of Object.entries(node.portRates ?? {})) {
       const match = /^r(\d+):(.*)$/.exec(handle)
       const r = sectionRecipe(node, match ? Number(match[1]) : 0)
-      if (typeof rate !== 'number' || rate < 0 || !r || !recipePorts(r).some(p => p.handle === (match?.[2] ?? handle) && p.consumed)) error('INVALID_PORT_RATE', `Node ${node.id}: port rate ${handle} must name a consumed input/output canonical handle and be nonnegative.`)
+      if (typeof rate !== 'number' || rate <= 0 || !r || !recipePorts(r).some(p => p.handle === (match?.[2] ?? handle) && p.consumed)) error('INVALID_PORT_RATE', `Node ${node.id}: port rate ${handle} must name a consumed input/output canonical handle and be positive; native zero port pins are ignored.`)
     }
   }
   for (const edge of project.edges) {

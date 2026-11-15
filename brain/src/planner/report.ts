@@ -1,6 +1,7 @@
 import { isRecord } from '../util.ts'
 import { portHandle } from './adapter.ts'
-import type { FactoryProject, GoalAssessment, ReportContext, ReportSummary, ThroughputResult } from './model.ts'
+import type { FactoryProject, GoalAssessment, MachineEnergyAssessment, ReportContext, ReportSummary, ThroughputResult } from './model.ts'
+import { getStorageRoles, storageTargetMode, hasStorageTarget, getNodePowerReport, getNodeSteamReport } from '../../vendor/gtnh-planner/dist/catalog.mjs'
 
 const EPS = 1e-7
 function meets(rule: string, actual: number | undefined, target: number): boolean {
@@ -30,6 +31,11 @@ export function summarizeReport(project: FactoryProject, nativeReport: unknown, 
   }
   const report = nativeReport as unknown as ThroughputResult
   const plan = report.plan
+  const planning = !!(project.planMode || project.solveMode || project.poolMode)
+  const roles = getStorageRoles(project)
+  const recipes = new Map(project.recipes.map(recipe => [recipe.id, recipe]))
+  summary.averageEuT = 0; summary.buildPeakEuT = 0
+  summary.averageSteamMbPerSecond = 0; summary.buildPeakSteamMbPerSecond = 0
   summary.totalEuT = report.totalEuT
   summary.forcedFlows = [...plan?.forced ?? []]
   summary.shortfalls = [...plan?.shortfalls ?? []]
@@ -39,6 +45,7 @@ export function summarizeReport(project: FactoryProject, nativeReport: unknown, 
   })
   summary.externalInputs = [
     ...(report.externalInputs ?? []).map(row => ({ source: 'native-externalInputs', ...row })),
+    ...Object.values(report.resources).filter(row => row.importedPerSecond > EPS && !(report.externalInputs ?? []).some(input => input.key === row.key)).map(row => ({ source: 'native-imported-balance', ...row })),
     ...(plan?.forced ?? []).filter(row => row.side === 'in' && row.perSecond > EPS).map(row => ({ source: 'forced', ...row })),
     ...(plan?.terminals ?? []).filter(row => row.side === 'in' && row.perSecond > EPS).map(row => ({ source: 'terminal', ...row })),
   ]
@@ -51,18 +58,16 @@ export function summarizeReport(project: FactoryProject, nativeReport: unknown, 
   summary.assumptions.push('Boundary lists preserve native resource balances and port-level detail as separate views of the same flows; do not sum both views together.')
   const unmet = new Set(plan?.unmetDrawers ?? [])
   for (const storage of project.storages ?? []) {
-    const outgoing = project.edges.some(edge => edge.source === storage.id)
-    const incoming = project.edges.some(edge => edge.target === storage.id)
+    const role = roles.get(storage.id)
     const rate = storage.targetPerSecond
-    const source = project.poolMode
-      ? (rate ?? 0) < 0 || storage.poolSide === 'source' || !storage.poolSide && outgoing && !incoming
-      : outgoing && !incoming || !outgoing && !incoming && ((rate ?? 0) < 0 || storage.poolSide === 'source')
-    const buffer = !project.poolMode && outgoing && incoming
+    const source = role === 'source'
+    const buffer = role === 'buffer'
     const reading = report.storages[storage.id]
     const actual = reading ? source ? reading.consumedPerSecond : reading.producedPerSecond : undefined
-    const rule = storage.targetMode ?? (storage.poolTargetMode === 'ignore' ? 'ignore' : (rate ?? 0) < 0 || source ? 'exact' : storage.poolTargetMode ?? 'at-least')
+    const rule = storageTargetMode(storage, role)
     if (source && actual !== undefined && actual > EPS) summary.externalInputs.push({ source: 'source-storage', storageId: storage.id, resourceKey: `${storage.kind}:${storage.resourceId}`, perSecond: actual, rule, ...(rate !== undefined ? { limit: Math.abs(rate) } : {}) })
-    if (buffer || !source && (storage.drainMode === 'byproduct' || storage.drainMode === 'trash') || rate === undefined || rule === 'ignore') continue
+    if (!source && !buffer && actual !== undefined && actual > EPS) summary.externalOutputs.push({ source: 'drain-storage', storageId: storage.id, resourceKey: `${storage.kind}:${storage.resourceId}`, perSecond: actual, drainMode: storage.drainMode ?? 'product' })
+    if (!planning || role !== 'source' && role !== 'product' || !hasStorageTarget(storage, role) || rate === undefined) continue
     const goal: GoalAssessment = { ownerId: storage.id, rule, target: Math.abs(rate), actual, resourceKey: `${storage.kind}:${storage.resourceId}`,
       met: !unmet.has(storage.id) && !reading?.targetUnreachable && meets(rule, actual, Math.abs(rate)) }
     summary.goals.push(goal)
@@ -71,20 +76,43 @@ export function summarizeReport(project: FactoryProject, nativeReport: unknown, 
     const sectionIds = [node.id, ...(node.extraRecipes ?? []).map((_, index) => `${node.id}#r${index + 1}`)]
     const readings = sectionIds.flatMap(id => report.nodes[id] ? [report.nodes[id]] : [])
     const fractionalMachines = readings.reduce((sum, row) => sum + Math.max(0, row.theoreticalMachinesRequired), 0)
-    const capacity = node.solvePin
-    summary.machines.push({ nodeId: node.id, sections: sectionIds, fractionalMachines,
-      buildMachines: Math.ceil(Math.max(0, fractionalMachines - EPS)), shared: sectionIds.length > 1,
+    const capacity = planning ? node.solvePin : node.machineCount
+    const buildMachines = Math.ceil(Math.max(0, fractionalMachines - EPS))
+    // Plan/Solve rewrite flow/EU fields at solved scale and use utilization 1 for running
+    // rows. Build leaves them at nameplate: multiply by utilization exactly once in either mode.
+    const averageEuT = readings.reduce((sum, row) => sum + row.euT * Math.max(0, row.utilization), 0)
+    const energy: MachineEnergyAssessment = { sections: [], averageEuT, buildPeakEuT: 0, averageSteamMbPerSecond: 0, buildPeakSteamMbPerSecond: 0 }
+    for (const [index, id] of sectionIds.entries()) {
+      const recipe = recipes.get(index ? node.extraRecipes?.[index - 1]?.recipeId ?? '' : node.recipeId)
+      const row = report.nodes[id]
+      if (!recipe || !row) continue
+      const power = getNodePowerReport(recipe, node)
+      const steam = getNodeSteamReport(recipe, node)
+      // The original throughput loop multiplies the machine rule by the card's parallel;
+      // energy-hatch and machine-specific maths stay entirely in the native reports.
+      const perMachineRunningEuT = power.drawEuT * node.parallel
+      const perMachineSteamMbPerSecond = (steam?.drawSteamPerTick ?? 0) * 20 * node.parallel
+      energy.sections.push({ nodeId: id, power, ...(steam ? { steam } : {}), cardParallel: node.parallel, perMachineRunningEuT, perMachineSteamMbPerSecond })
+      energy.buildPeakEuT = Math.max(energy.buildPeakEuT, perMachineRunningEuT * buildMachines)
+      energy.buildPeakSteamMbPerSecond = Math.max(energy.buildPeakSteamMbPerSecond, perMachineSteamMbPerSecond * buildMachines)
+      const activeMachines = planning ? row.theoreticalMachinesRequired : node.machineCount * Math.max(0, row.utilization)
+      energy.averageSteamMbPerSecond += perMachineSteamMbPerSecond * activeMachines
+    }
+    summary.averageEuT += averageEuT; summary.buildPeakEuT += energy.buildPeakEuT
+    summary.averageSteamMbPerSecond += energy.averageSteamMbPerSecond; summary.buildPeakSteamMbPerSecond += energy.buildPeakSteamMbPerSecond
+    if (energy.averageSteamMbPerSecond > EPS) summary.externalInputs.push({ source: 'machine-steam', nodeId: node.id, resourceKey: 'fluid:steam', perSecond: energy.averageSteamMbPerSecond, note: 'Native steam operating requirement, separate from recipe wires; provide steam supply.' })
+    summary.machines.push({ nodeId: node.id, sections: sectionIds, fractionalMachines, buildMachines, shared: sectionIds.length > 1,
       ...(capacity !== undefined ? { capacity } : {}), capacityExceeded: capacity !== undefined && fractionalMachines > capacity + EPS * Math.max(1, capacity),
-      euT: readings.reduce((sum, row) => sum + (row.utilization > 0 ? row.euT : 0), 0),
+      euT: averageEuT, energy,
     })
-    for (const [handle, target] of Object.entries(node.portRates ?? {})) {
+    for (const [handle, target] of Object.entries(project.planMode ? node.portRates ?? {} : {})) {
       const match = /^r(\d+):(.*)$/.exec(handle)
       const section = match ? Number(match[1]) : 0
       const bare = match?.[2] ?? handle
       const row = report.nodes[section ? `${node.id}#r${section}` : node.id]
       const flows = row ? bare.startsWith('input:') ? row.inputs : row.outputs : undefined
       const flow = flows && Object.values(flows).find(flow => portHandle(bare.startsWith('input:') ? 'input' : 'output', flow.kind, flow.resourceId) === bare)
-      const actual = row && row.utilization <= 0 ? 0 : flow?.amountPerSecond
+      const actual = flow && row ? flow.amountPerSecond * Math.max(0, row.utilization) : undefined
       summary.goals.push({ ownerId: `${node.id}:${handle}`, rule: 'exact', target, actual, met: meets('exact', actual, target), resourceKey: flow?.key })
     }
     // Old Solve/Build projects use this field; plan mode ignores it (adapter warns).
@@ -92,16 +120,18 @@ export function summarizeReport(project: FactoryProject, nativeReport: unknown, 
       const target = node.targetOutput
       const row = report.nodes[node.id]
       const key = `${target.kind}:${target.resourceId}` as const
-      const actual = row?.utilization === 0 ? 0 : row?.outputs[key]?.amountPerSecond
+      const actual = row?.outputs[key] ? row.outputs[key].amountPerSecond * Math.max(0, row.utilization) : undefined
       summary.goals.push({ ownerId: node.id, rule: 'at-least', target: target.amountPerSecond, actual, met: meets('at-least', actual, target.amountPerSecond), resourceKey: key })
     }
   }
   if (project.targetRate) {
     const target = project.targetRate
     const key = `${target.kind}:${target.resourceId}` as const
-    const actual = report.resources[key]?.productPerSecond
+    const actual = report.resources[key]?.producedPerSecond
     summary.goals.push({ ownerId: project.id, rule: 'at-least', target: target.amountPerSecond, actual, met: meets('at-least', actual, target.amountPerSecond), resourceKey: key })
   }
+  summary.assumptions.push('averageEuT is load-weighted actual average. Native totalEuT is preserved unchanged (Build mode uses nameplate totals); it is not always the average. Each energy section retains the original voltage/amps/hatches and full-speed draw.')
+  summary.assumptions.push('buildPeakEuT and buildPeakSteamMbPerSecond are the sum of integer-build full-speed requirements; a shared card uses the largest section draw, not the sum of its time-shared recipes. Actual scheduling may reduce simultaneous peak. Zero EU/t on a steam machine does not mean free energy.')
   if (project.recipes.some(r => r.outputs.some(o => (o.chance ?? 1) < 1))) summary.assumptions.push('Probabilistic outputs are expected long-run rates. Integer machine rounding does not guarantee completion of a finite batch or eliminate variance.')
   if (project.recipes.some(r => r.inputs.some(i => i.consumed === false || i.amount === 0))) summary.assumptions.push('Nonconsumed count-zero circuits, molds and catalysts are preparation conditions, not continuous consumption. Install the required item/settings before starting.')
   if (context.provenance?.some(p => p.status !== 'local-current')) summary.assumptions.push('Some recipes are declared/unverified or explicitly stale saved snapshots; these are assumptions, not a match with current local packdata.')

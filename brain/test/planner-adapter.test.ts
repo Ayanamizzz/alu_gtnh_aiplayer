@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 import { RecipeBook } from '../src/packdata/recipes.ts'
+import { ItemTable } from '../src/packdata/items.ts'
 import type { PackData } from '../src/packdata/index.ts'
 import { describeRecipes, prepareProject, portHandle } from '../src/planner/adapter.ts'
 import { summarizeReport } from '../src/planner/report.ts'
@@ -12,9 +13,9 @@ import { NATIVE_PROJECT_EXAMPLE } from '../src/planner/model.ts'
 import type { DescribedRecipe, FactoryProject, Recipe, ThroughputResult } from '../src/planner/model.ts'
 
 const handlers = [{ key: 'gt.recipe.macerator', name: '研磨机', machines: [{ id: 'gregtech:gt.blockmachines', meta: 301 }], read: 'gregtech' }]
-function fixture(rows: object[]) {
+function fixture(rows: object[], handlerRows: object[] = handlers) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'planner-adapter-'))
-  fs.writeFileSync(path.join(dir, 'handlers.json'), JSON.stringify(handlers))
+  fs.writeFileSync(path.join(dir, 'handlers.json'), JSON.stringify(handlerRows))
   fs.writeFileSync(path.join(dir, 'recipes.jsonl'), rows.map(r => JSON.stringify(r)).join('\n') + '\n')
   const recipes = RecipeBook.load(dir)!.book
   const packdata: PackData = { dir, recipes }
@@ -60,6 +61,30 @@ test('describe keeps damage, candidates, grids, count-zero tools, chance, fluids
   } finally { f.close() }
 })
 
+test('different named cultures cannot be merged by item/meta, but ordinary Chinese/English labels remain usable', () => {
+  const f = fixture([
+    { ...row, out: [{ id: 'test:culture', meta: 0, n: 1, name: 'Culture A' }] },
+    { ...row, in: [{ id: 'test:culture', meta: 0, n: 1, name: 'Culture B' }] },
+    { ...row, in: [{ id: 'minecraft:stone', meta: 1, n: 2, name: '石头' }] },
+    { ...row, in: [{ id: 'minecraft:stone', meta: 1, n: 2, name: 'Stone' }] },
+  ])
+  f.packdata.items = new ItemTable([{ id: 'test:culture', meta: 0, name: '培养物', en: 'Culture' }, { id: 'minecraft:stone', meta: 1, name: '石头', en: 'Stone' }])
+  try {
+    const descriptions = describeRecipes(f.packdata, [0, 1, 2, 3]).recipes
+    assert(descriptions[0].issues.some(i => i.code === 'MISSING_ITEM_INSTANCE_DATA'))
+    assert(descriptions[1].issues.some(i => i.code === 'MISSING_ITEM_INSTANCE_DATA'))
+    const p = projectFrom(descriptions[1])
+    p.recipes.push(descriptions[0].recipe); p.nodes.push(descriptions[0].nodeTemplate)
+    p.edges.push({ id: 'culture', source: p.nodes[1].id, target: p.nodes[0].id, resourceKind: 'item', resourceId: 'test:culture' })
+    assert(prepareProject(f.packdata, p).issues.some(i => i.code === 'MISSING_ITEM_INSTANCE_DATA'))
+    for (const recipe of p.recipes) delete recipe.metadata!.localBinding
+    noErrors(prepareProject(f.packdata, p))
+    noErrors(prepareProject(f.packdata, projectFrom(descriptions[2])))
+    noErrors(prepareProject(f.packdata, projectFrom(descriptions[3])))
+    assert.equal(descriptions[0].provenance.binding?.snapshot.out[0].name, 'Culture A')
+  } finally { f.close() }
+})
+
 test('same local recipe moved to another ref keeps identity, while stale bindings require refresh or explicit old assumptions', () => {
   const f = fixture([row, { ...row, ticks: 200 }])
   try {
@@ -73,6 +98,28 @@ test('same local recipe moved to another ref keeps identity, while stale binding
     assert(prepareProject(f.packdata, plan).issues.some(i => i.code === 'STALE_LOCAL_RECIPE' && i.severity === 'error'))
     noErrors(prepareProject(f.packdata, plan, { allowStale: true }))
     assert.equal(prepareProject(f.packdata, plan, { allowStale: true }).provenance[0].status, 'local-stale')
+    f.packdata.recipes.close()
+  } finally { f.close() }
+})
+
+test('replacing export files cannot sign an old loaded recipe with a new dataset fingerprint', () => {
+  const f = fixture([row])
+  try {
+    const original = describeRecipes(f.packdata, [0]).recipes[0]
+    const p = projectFrom(original)
+    const replacement = path.join(f.packdata.dir, 'next.jsonl')
+    fs.writeFileSync(replacement, JSON.stringify({ ...row, ticks: 200 }) + '\n')
+    fs.renameSync(replacement, path.join(f.packdata.dir, 'recipes.jsonl'))
+    assert.equal(f.packdata.recipes!.isSourceCurrent(), false)
+    assert(describeRecipes(f.packdata, [0]).issues.some(i => i.code === 'PACKDATA_RELOAD_REQUIRED'))
+    assert(prepareProject(f.packdata, p).issues.some(i => i.code === 'PACKDATA_RELOAD_REQUIRED'))
+    f.packdata.recipes!.close(); f.packdata.recipes = RecipeBook.load(f.packdata.dir)!.book
+    const fresh = describeRecipes(f.packdata, [0]).recipes[0]
+    assert.equal(fresh.recipe.durationTicks, 200)
+    assert.notEqual(fresh.recipe.id, original.recipe.id)
+    noErrors(prepareProject(f.packdata, projectFrom(fresh)))
+    fs.writeFileSync(path.join(f.packdata.dir, 'handlers.json'), JSON.stringify([{ ...handlers[0], name: 'Changed export handler' }]))
+    assert.equal(f.packdata.recipes.isSourceCurrent(), false)
     f.packdata.recipes.close()
   } finally { f.close() }
 })
@@ -205,6 +252,125 @@ test('shared native extraRecipes round machine time once for the card, not once 
     assert(summary.goals.every(g => g.met))
     p.recipes[1].machineType = 'Chemical Reactor'
     assert(prepareProject(undefined, p).issues.some(i => i.code === 'SHARED_MACHINE_MISMATCH'))
+    p.recipes[1].machineHandlers = [
+      { id: 'chemical-reactor', label: 'Chemical Reactor', machineType: 'Chemical Reactor', minimumTier: 'LV' },
+      { id: 'macerator', label: 'Macerator', machineType: 'Macerator', minimumTier: 'LV' },
+    ]
+    assert(prepareProject(undefined, p).issues.some(i => i.code === 'AMBIGUOUS_SHARED_MACHINE'))
+    p.nodes[0].machineHandlerId = 'macerator'
+    noErrors(prepareProject(undefined, p))
+  } finally { await engine.close() }
+})
+
+test('zero machine pins and zero nameplate seeds are rejected, while an explicit zero source limit really stops supply', async () => {
+  const engine = new PlannerEngine()
+  try {
+    const p = structuredClone(NATIVE_PROJECT_EXAMPLE)
+    p.nodes[0].solvePin = 0; p.nodes[0].solvePinExact = true
+    assert(prepareProject(undefined, p).issues.some(i => i.code === 'ZERO_MACHINE_PIN'))
+    delete p.nodes[0].solvePin; delete p.nodes[0].solvePinExact; p.nodes[0].machineCount = 0
+    assert(prepareProject(undefined, p).issues.some(i => i.code === 'ZERO_NAMEPLATE_SEED'))
+    p.nodes[0].machineCount = 1
+    const running = await engine.calculate(p) as ThroughputResult
+    assert.equal(running.nodes.machine.theoreticalMachinesRequired, 1)
+    assert.equal(running.totalEuT, 2)
+    p.storages![0].targetPerSecond = 0
+    for (const rule of ['exact', 'at-most'] as const) {
+      p.storages![0].targetMode = rule
+      noErrors(prepareProject(undefined, p))
+      const stopped = await engine.calculate(p) as ThroughputResult
+      assert.equal(stopped.storages.source.consumedPerSecond, 0)
+      assert.equal(stopped.storages.product.producedPerSecond, 0)
+      assert.equal(summarizeReport(p, stopped).status, 'unmet')
+    }
+  } finally { await engine.close() }
+})
+
+test('Build targets use actual utilization, and integer machines retain their running power rather than the average', async () => {
+  const engine = new PlannerEngine()
+  try {
+    const p: FactoryProject = { schemaVersion: 1, id: 'build', name: 'Half-fed build', recipes: [
+      { id: 'a', name: 'A', machineType: 'Macerator', minimumTier: 'LV', durationTicks: 40, eut: 30, inputs: [], outputs: [{ kind: 'item', id: 'feed', amount: 1 }] },
+      { id: 'b', name: 'B', machineType: 'Macerator', minimumTier: 'LV', durationTicks: 20, eut: 30, inputs: [{ kind: 'item', id: 'feed', amount: 1 }], outputs: [{ kind: 'item', id: 'product', amount: 1 }] },
+    ], nodes: ['a', 'b'].map(id => ({ id, recipeId: id, machineCount: 1, parallel: 1, overclockTier: 'LV', enabled: true, position: { x: 0, y: 0 }, ...(id === 'b' ? { targetOutput: { kind: 'item' as const, resourceId: 'product', amountPerSecond: 1 } } : {}) })),
+      storages: [{ id: 'product', kind: 'item', resourceId: 'product', position: { x: 200, y: 0 } }],
+      edges: [{ id: 'feed', source: 'a', target: 'b', resourceKind: 'item', resourceId: 'feed' }, { id: 'out', source: 'b', target: 'product', resourceKind: 'item', resourceId: 'product' }], fuelProfiles: [] }
+    noErrors(prepareProject(undefined, p))
+    const raw = await engine.calculate(p) as ThroughputResult
+    const result = summarizeReport(p, raw)
+    assert.equal(raw.nodes.b.utilization, .5)
+    assert.equal(result.goals.find(g => g.ownerId === 'b')?.actual, .5)
+    assert.equal(result.status, 'unmet')
+    assert.equal(result.averageEuT, 45)
+    assert.equal(result.machines.find(m => m.nodeId === 'b')?.energy?.sections[0].perMachineRunningEuT, 30)
+    const plan = structuredClone(NATIVE_PROJECT_EXAMPLE)
+    plan.recipes[0].eut = 30; plan.storages![1].targetPerSecond = .3; delete plan.nodes[0].solvePin
+    const scaled = summarizeReport(plan, await engine.calculate(plan))
+    assert(Math.abs(scaled.averageEuT! - 9) < 1e-7)
+    assert.equal(scaled.buildPeakEuT, 30)
+    assert.equal(scaled.machines[0].energy?.sections[0].power.tier, 'LV')
+  } finally { await engine.close() }
+})
+
+test('a negative unwired Pool target is a source even without poolSide', async () => {
+  const engine = new PlannerEngine()
+  try {
+    const p = structuredClone(NATIVE_PROJECT_EXAMPLE)
+    p.poolMode = true; p.edges = []; delete p.nodes[0].solvePin
+    p.storages![1].poolSide = 'drain'
+    noErrors(prepareProject(undefined, p))
+    const result = summarizeReport(p, await engine.calculate(p))
+    assert(result.goals.every(g => g.met))
+    assert.equal(result.goals.find(g => g.ownerId === 'source')?.actual, 1)
+    assert.equal(result.status, 'needs-external-supply')
+  } finally { await engine.close() }
+})
+
+test('GT omitted special means zero heat requirement, while steam defaults still require real steam', async () => {
+  const f = fixture([{ ...row, h: 'gt.recipe.multidehydrator', eut: 30, ticks: 1000 }], [{ ...handlers[0], key: 'gt.recipe.multidehydrator' }])
+  const steamFixture = fixture([row])
+  const engine = new PlannerEngine()
+  try {
+    const d = describeRecipes(f.packdata, [0]).recipes[0]
+    assert.equal(d.recipe.specialValue, 0)
+    assert.equal(d.provenance.binding?.snapshot.special, undefined)
+    assert.equal(d.provenance.binding?.snapshot.raw.special, undefined)
+    assert.deepEqual(d.recipe.nei?.additionalInfo, ['Special value: 0'])
+    const p = projectFrom(d, 1)
+    p.nodes[0].overclockTier = 'EV'; p.nodes[0].coilTier = 'nichrome'
+    noErrors(prepareProject(f.packdata, p))
+    const hot = summarizeReport(p, await engine.calculate(p))
+    assert(hot.machines[0].energy!.sections[0].power.perfectOverclockSteps > 0)
+    const steam = describeRecipes(steamFixture.packdata, [0], { machineHandlerId: 'steam-macerator' }).recipes[0]
+    const sp = projectFrom(steam, .1)
+    noErrors(prepareProject(steamFixture.packdata, sp))
+    const result = summarizeReport(sp, await engine.calculate(sp))
+    assert.equal(result.averageEuT, 0)
+    assert(result.averageSteamMbPerSecond! > 0)
+    assert.equal(result.machines[0].energy?.sections[0].steam?.drawSteamPerTick, 4)
+    assert(result.externalInputs.some(row => (row as { source?: string }).source === 'machine-steam'))
+  } finally { f.close(); steamFixture.close(); await engine.close() }
+})
+
+test('native hidden prefixes and section ids cannot hide supplies or collide with expanded shared sections', () => {
+  for (const id of ['hatch-supply:fake', 'pool:fake', 'pool-tank:fake', 'a#r1', 'a|i|fake']) {
+    const p = structuredClone(NATIVE_PROJECT_EXAMPLE)
+    p.storages![0].id = id; p.edges[0].source = id
+    assert(prepareProject(undefined, p).issues.some(i => i.code === 'RESERVED_GRAPH_ID'))
+  }
+  const p = structuredClone(NATIVE_PROJECT_EXAMPLE); p.nodes[0].parallel = 1.5
+  assert(prepareProject(undefined, p).issues.some(i => i.code === 'INVALID_NODE'))
+})
+
+test('native trash drawers stay visible as disposal requirements even when they disappear from surplus totals', async () => {
+  const engine = new PlannerEngine()
+  try {
+    const p = structuredClone(NATIVE_PROJECT_EXAMPLE)
+    p.recipes[0].outputs.push({ kind: 'fluid', id: 'waste', amount: 1000 })
+    p.storages!.push({ id: 'trash', kind: 'fluid', resourceId: 'waste', drainMode: 'trash', position: { x: 0, y: 0 } })
+    p.edges.push({ id: 'trash-wire', source: 'machine', target: 'trash', resourceKind: 'fluid', resourceId: 'waste' })
+    const summary = summarizeReport(p, await engine.calculate(p))
+    assert(summary.externalOutputs.some(row => (row as { drainMode?: string; perSecond?: number }).drainMode === 'trash' && (row as { perSecond?: number }).perSecond === 1000))
   } finally { await engine.close() }
 })
 
