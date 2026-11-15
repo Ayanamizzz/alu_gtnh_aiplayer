@@ -19,7 +19,11 @@ interface CatalogData { tiers: string[]; recipeTiers: [string, number][]; coils:
 const data = JSON.parse(fs.readFileSync(new URL('../../vendor/gtnh-planner/mod/handlers.json', import.meta.url), 'utf8')) as CatalogData
 const maps = new Map(data.maps.map(map => [map.id, map]))
 
-export function recipeMapFor(handlerKey: string): MapEntry | undefined { return maps.get(handlerKey) }
+export function recipeMapFor(handlerKey: string): MapEntry | undefined {
+  // Original mod WebCards.entry aliases its current GT++ map ids to the website export.
+  return maps.get(handlerKey) ?? (handlerKey === 'gt.recipe.industrialcokeoven' ? maps.get('gtpp.recipe.cokeoven')
+    : handlerKey.startsWith('gt.recipe.') ? maps.get(`gtpp.recipe.${handlerKey.slice(10)}`) : undefined)
+}
 function tierIndex(tier: string | undefined): number { return data.tiers.findIndex(t => t.toLowerCase() === tier?.trim().toLowerCase()) }
 function recipeMinimumTier(eut: number): string { return data.recipeTiers.find(([, voltage]) => Math.abs(eut) <= voltage)?.[0] ?? 'MAX' }
 function control(ref: string): MachineConfigControl {
@@ -66,6 +70,8 @@ export function machineOptionsFor(local: LocalRecipe, recipe: Recipe): MachineOp
     const app = map.app?.find(app => app.id === handler.id)
     const template = map.handlers?.find(t => t.id === handler.id)
     const missing: string[] = []
+    if (map.name === 'Fusion Reactor') missing.push('Local export lacks fusionStartupEu (FUSION_THRESHOLD). A foreign startup lookup is not a verified local threshold.')
+    if (map.name === 'Bacterial Vat') missing.push('Local export lacks culture NBT and per-recipe glass/radiation requirements. Native vat fallback requirements cannot be treated as verified local metadata.')
     if (!app) missing.push(`No original app profile metadata for handler ${handler.id}.`)
     if (app?.multiblock && !app.table && template?.durationMultiplier === undefined && template?.eutMultiplier === undefined && !template?.perfectOverclock && !template?.controls?.length) missing.push(`Multiblock ${handler.id} has no confirmed machine-table rule or exported processing coefficients.`)
     const originalControls = [...handler.machineConfigControls ?? recipe.machineConfigControls ?? [], ...native.getMachineTableControls(handler.machineType, recipe) as MachineConfigControl[]]

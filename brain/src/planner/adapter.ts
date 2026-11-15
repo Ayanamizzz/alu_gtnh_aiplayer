@@ -5,7 +5,7 @@ import type { PackData } from '../packdata/index.ts'
 import { ANY_META, CIRCUIT_ID } from '../packdata/recipes.ts'
 import type { Recipe as LocalRecipe, RecipeSlot } from '../packdata/recipes.ts'
 import { isRecord } from '../util.ts'
-import { resourceMatchesInput, canonicalizeResourceHandleId } from '../../vendor/gtnh-planner/dist/catalog.mjs'
+import { resourceMatchesInput, canonicalizeResourceHandleId, getRecipeMachineHandlers } from '../../vendor/gtnh-planner/dist/catalog.mjs'
 import { CATALOG_VERSION, machineOptionsFor, recipeMapFor, validateMachineSettings } from './catalog.ts'
 import type {
   DescribeOptions, DescribeResult, DescribedRecipe, FactoryProject, FactoryNode, LocalRecipeBinding,
@@ -19,7 +19,7 @@ export function fingerprint(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(canonical(value))).digest('hex')
 }
 
-const datasetCache = new Map<string, { stamp: string; digest: string }>()
+const datasetCache = new Map<string, { stamp: string; digest: string; offsets: Uint32Array; lengths: Uint32Array }>()
 /** Hash the actual files, not the directory name, line ref or translated labels. Recheck stat on every solve. */
 function datasetFingerprint(packdata: PackData): string {
   const files = ['meta.json', 'handlers.json', 'recipes.jsonl'].map(name => path.join(packdata.dir, name))
@@ -31,16 +31,45 @@ function datasetFingerprint(packdata: PackData): string {
   if (cached?.stamp === stamp) return cached.digest
   const hash = createHash('sha256')
   const buffer = Buffer.alloc(1024 * 1024)
+  const offsets: number[] = []; const lengths: number[] = []
   files.forEach((file, index) => {
     hash.update(`${index}:`)
     let fd: number
     try { fd = fs.openSync(file, 'r') } catch { hash.update('missing'); return }
-    try { let n: number; while ((n = fs.readSync(fd, buffer, 0, buffer.length, null)) > 0) hash.update(buffer.subarray(0, n)) }
-    finally { fs.closeSync(fd) }
+    try {
+      let n: number; let position = 0; let start = 0
+      while ((n = fs.readSync(fd, buffer, 0, buffer.length, null)) > 0) {
+        hash.update(buffer.subarray(0, n))
+        if (index === 2) {
+          let at = 0
+          for (;;) {
+            const end = buffer.indexOf(10, at)
+            if (end < 0 || end >= n) break
+            const length = position + end - start
+            if (length > 0) { offsets.push(start); lengths.push(length) }
+            start = position + end + 1; at = end + 1
+          }
+        }
+        position += n
+      }
+      if (index === 2 && start < position) { offsets.push(start); lengths.push(position - start) }
+    } finally { fs.closeSync(fd) }
   })
   const digest = hash.digest('hex')
-  datasetCache.set(packdata.dir, { stamp, digest })
+  datasetCache.set(packdata.dir, { stamp, digest, offsets: Uint32Array.from(offsets), lengths: Uint32Array.from(lengths) })
   return digest
+}
+
+function localSnapshot(packdata: PackData, local: LocalRecipe): LocalRecipeBinding['snapshot'] {
+  datasetFingerprint(packdata)
+  const index = datasetCache.get(packdata.dir)!
+  const bytes = Buffer.alloc(index.lengths[local.ref] ?? 0)
+  const fd = fs.openSync(path.join(packdata.dir, 'recipes.jsonl'), 'r')
+  try { fs.readSync(fd, bytes, 0, bytes.length, index.offsets[local.ref]) } finally { fs.closeSync(fd) }
+  const raw: unknown = JSON.parse(bytes.toString('utf8'))
+  if (!isRecord(raw)) throw new Error(`Local recipe ref ${local.ref} is not an exported JSON object.`)
+  const { ref: _ref, ...snapshot } = local
+  return { ...snapshot, raw }
 }
 
 /** Upstream's item id spelling: bare id is meta 0, @32767 is wildcard damage. */
@@ -76,24 +105,31 @@ function nativeFingerprint(recipe: Recipe): string {
 }
 
 function describeOne(packdata: PackData, local: LocalRecipe, options: DescribeOptions, dataset: string): DescribedRecipe {
-  const { ref, ...snapshot } = local
+  const ref = local.ref
+  const snapshot = localSnapshot(packdata, local)
   const digest = fingerprint(snapshot)
   const id = `local:${digest}`
   const issues: PlannerIssue[] = []
   const add = (severity: PlannerIssue['severity'], code: string, message: string) => issues.push({ severity, code, message, recipeId: id })
   const map = recipeMapFor(local.handler.key)
-  if (!local.handler.gregtech || !Number.isFinite(local.ticks) || (local.ticks ?? 0) <= 0 || !Number.isFinite(local.eut)) {
+  if (!local.handler.gregtech || !Number.isInteger(local.ticks) || (local.ticks ?? 0) <= 0 || !Number.isFinite(local.eut) || (local.eut ?? 0) < 0) {
     add('error', 'MISSING_RECIPE_MATH', 'The local export has no complete positive durationTicks and EU/t baseline for this recipe. No generic speed is assumed.')
   }
   if (!map) add('error', 'MISSING_MACHINE_MAP', `No authoritative machine map for local handler ${local.handler.key}.`)
+  const rawOutputs = Array.isArray(snapshot.raw.out) ? snapshot.raw.out : []
+  if (rawOutputs.some(o => !isRecord(o) || typeof o.id !== 'string')) add('error', 'UNSUPPORTED_OUTPUT_VARIANTS', 'Some exported outputs are choice groups rather than concrete stacks. Their full raw data is retained; a native output cannot be guessed.')
   const recipe: Recipe = {
     id, name: `${map?.name ?? local.handler.key} / ${digest.slice(0, 12)}`,
     kind: local.handler.gregtech ? 'gregtech_machine' : 'unknown',
     machineType: map?.name ?? local.handler.key, minimumTier: 'ULV',
     durationTicks: local.ticks ?? 0, eut: local.eut ?? 0,
     inputs: [...local.in.map(slot => slotInput(slot, packdata)), ...local.fin.map(fluid => ({ kind: 'fluid' as const, id: fluid.f, amount: fluid.mb, displayName: fluid.f }))],
-    outputs: [...local.out.map(stack => ({ kind: 'item' as const, id: itemResourceId(stack.id, stack.meta), amount: stack.n,
-      displayName: packdata.items?.get(stack.id, stack.meta)?.en ?? stack.id, ...(stack.chance !== undefined ? { chance: stack.chance } : {}) })),
+    outputs: [...local.out.map((stack, index) => {
+      const raw = rawOutputs[index]
+      const chance = isRecord(raw) && typeof raw.chance === 'number' ? raw.chance : stack.chance
+      return { kind: 'item' as const, id: itemResourceId(stack.id, stack.meta), amount: stack.n,
+        displayName: packdata.items?.get(stack.id, stack.meta)?.en ?? stack.id, ...(chance !== undefined ? { chance } : {}) }
+    }),
     ...local.fout.map(fluid => ({ kind: 'fluid' as const, id: fluid.f, amount: fluid.mb, displayName: fluid.f }))],
     ...(local.special !== undefined ? { specialValue: local.special, nei: { additionalInfo: [`Special value: ${local.special}`] } } : {}),
     source: { recipeMap: map?.name ?? local.handler.key, rawRecipeId: String(ref), sourceIdentifier: local.handler.key, exporter: 'unknown' },
@@ -109,7 +145,7 @@ function describeOne(packdata: PackData, local: LocalRecipe, options: DescribeOp
   if (local.fake) add('warning', 'DISPLAY_RECIPE', 'Local fake:true is an NEI display recipe: the real machine uses special matching/processing logic. This is a static baseline, not confirmation that it can run unchanged.')
   if (local.in.some(slot => slot.kind !== 'item' || slot.meta === ANY_META)) add('warning', 'EQUIVALENCE_CLASS', 'Unselected ore/candidate/wildcard inputs remain explicit equivalence classes. Connect compatible resources or use native recipeInputOverrides; no candidate has been chosen for you.')
   if (local.in.some(slot => slot.kind !== 'item' && slot.more > 0)) add('warning', 'INCOMPLETE_CANDIDATES', 'The local exporter truncated some candidate lists (more > 0). The complete ore/candidate identity and exported candidates are retained; missing candidates are not guessed.')
-  if (local.out.some(stack => (stack.chance ?? 1) < 1)) add('warning', 'EXPECTED_OUTPUT', 'Chanced outputs are long-run expectations (amount × chance), not a guarantee that a short batch will yield them.')
+  if (recipe.outputs.some(stack => (stack.chance ?? 1) < 1)) add('warning', 'EXPECTED_OUTPUT', 'Chanced outputs are long-run expectations (amount × chance), not a guarantee that a short batch will yield them.')
   const ports = recipePorts(recipe)
   ports.forEach(port => { port.localSlot = port.side === 'input' ? [...local.in, ...local.fin][port.index] : [...local.out, ...local.fout][port.index] })
   if (new Set(ports.map(p => p.handle)).size !== ports.length) add('info', 'AGGREGATED_PORTS', 'Native flow rows aggregate slots with the same kind/id. Repeated handles below deliberately name the same summed row; original slot indices remain in the snapshot.')
@@ -195,7 +231,9 @@ export function prepareProject(packdata: PackData | undefined, value: unknown, o
     }
     if (nativeFingerprint(recipe) !== binding.nativeFingerprint || fingerprint(binding.snapshot) !== binding.fingerprint) error('BINDING_CHANGED', `Bound recipe ${recipe.id} was edited. Refresh describe, or remove localBinding to declare an unverified recipe.`)
     const current = packdata?.recipes?.get(binding.ref)
-    const currentFingerprint = current ? fingerprint((({ ref: _ref, ...snapshot }) => snapshot)(current)) : undefined
+    let currentFingerprint: string | undefined
+    try { currentFingerprint = current && packdata ? fingerprint(localSnapshot(packdata, current)) : undefined }
+    catch { currentFingerprint = undefined }
     const stale = !packdata || currentFingerprint !== binding.fingerprint || datasetFingerprint(packdata) !== binding.datasetFingerprint || binding.catalogVersion !== CATALOG_VERSION
     provenance.push({ recipeId: recipe.id, status: stale ? 'local-stale' : 'local-current', binding })
     if (stale) issues.push({ severity: options.allowStale ? 'warning' : 'error', code: 'STALE_LOCAL_RECIPE', recipeId: recipe.id, message: options.allowStale ? 'Using the saved recipe snapshot as an explicit old assumption; local data/catalog no longer matches.' : 'Local data/catalog changed or the recipe ref no longer matches its full fingerprint. Refresh describe or explicitly set allowStale.' })
@@ -218,10 +256,13 @@ export function prepareProject(packdata: PackData | undefined, value: unknown, o
   for (const node of project.nodes) {
     const recipe = recipes.get(node.recipeId)
     if (!recipe) { error('MISSING_RECIPE', `Node ${node.id} references missing recipe ${node.recipeId}.`); continue }
+    const primaryHandlers = getRecipeMachineHandlers(recipe)
+    const sharedHandler = primaryHandlers.find(h => h.id === node.machineHandlerId) ?? primaryHandlers[0]
     for (const [section, recipeId] of [node.recipeId, ...(node.extraRecipes ?? []).map(s => s.recipeId)].entries()) {
       const r = recipes.get(recipeId)
       if (!r) { error('MISSING_RECIPE', `Node ${node.id} section ${section} references missing recipe ${recipeId}.`); continue }
-      if (bindingOf(r)) issues.push(...validateMachineSettings(r, node))
+      if (section > 0 && sharedHandler && !getRecipeMachineHandlers(r).some(h => h.id === sharedHandler.id)) error('SHARED_MACHINE_MISMATCH', `Node ${node.id}: section ${section} cannot run on the primary section's ${sharedHandler.id} machine.`)
+      if (bindingOf(r)) issues.push(...validateMachineSettings(r, { ...node, machineHandlerId: sharedHandler?.id ?? node.machineHandlerId }))
       const overrides = section === 0 ? node.recipeInputOverrides : node.extraRecipes?.[section - 1]?.recipeInputOverrides
       for (const [key, override] of Object.entries(overrides ?? {})) {
         const original = /^\d+$/.test(key) ? r.inputs[Number(key)] : undefined
@@ -260,7 +301,7 @@ export function prepareProject(packdata: PackData | undefined, value: unknown, o
       const exact = candidates.find(p => p.resourceId === edge.resourceId)
       const selected = exact ?? candidates[0]
       if (!selected) error('EDGE_RESOURCE_MISMATCH', `Edge ${edge.id}: ${end} recipe has no compatible ${side} resource.`)
-      else if (handle && selected.handle !== canonicalizeResourceHandleId(match?.[2] ?? handle)) error('EDGE_HANDLE_MISMATCH', `Edge ${edge.id}: upstream resolves this resource to ${selected.handle}, not ${handle}. Concretize recipeInputOverrides rather than choosing an ignored handle.`)
+      else if (handle && selected.handle !== canonicalizeResourceHandleId(match?.[2] ?? handle) && `${side}:${selected.kind}:${selected.resourceId}` !== (match?.[2] ?? handle)) error('EDGE_HANDLE_MISMATCH', `Edge ${edge.id}: upstream resolves this resource to ${selected.handle}, not ${handle}. Concretize recipeInputOverrides rather than choosing an ignored handle.`)
       else if (!exact && new Set(candidates.map(p => p.handle)).size > 1) error('AMBIGUOUS_RESOURCE_PORT', `Edge ${edge.id}: this resource satisfies multiple input rows; upstream picks the first. Concretize native recipeInputOverrides to make the intended row unambiguous.`)
     }
   }

@@ -33,6 +33,10 @@ export function summarizeReport(project: FactoryProject, nativeReport: unknown, 
   summary.totalEuT = report.totalEuT
   summary.forcedFlows = [...plan?.forced ?? []]
   summary.shortfalls = [...plan?.shortfalls ?? []]
+  for (const forced of plan?.forced ?? []) if (forced.side === 'in' && forced.perSecond > EPS) summary.issues.push({
+    severity: 'warning', code: 'FORCED_IMPORT', nodeId: forced.nodeId,
+    message: `The native solve adds ${forced.perSecond}/s of ${forced.resourceKey} at ${forced.portKey}. Targets may be met only with this extra supply, beyond the drawn supply chain; a satisfied source cap does not close this gap.`,
+  })
   summary.externalInputs = [
     ...(report.externalInputs ?? []).map(row => ({ source: 'native-externalInputs', ...row })),
     ...(plan?.forced ?? []).filter(row => row.side === 'in' && row.perSecond > EPS).map(row => ({ source: 'forced', ...row })),
@@ -49,18 +53,19 @@ export function summarizeReport(project: FactoryProject, nativeReport: unknown, 
   for (const storage of project.storages ?? []) {
     const outgoing = project.edges.some(edge => edge.source === storage.id)
     const incoming = project.edges.some(edge => edge.target === storage.id)
-    const source = outgoing && !incoming || !outgoing && !incoming && project.poolMode && storage.poolSide === 'source'
-    const buffer = outgoing && incoming
     const rate = storage.targetPerSecond
-    if (buffer || storage.drainMode === 'byproduct' || storage.drainMode === 'trash' || rate === undefined) continue
-    const rule = storage.targetMode ?? (storage.poolTargetMode === 'ignore' ? 'ignore' : rate < 0 || source ? 'exact' : storage.poolTargetMode ?? 'at-least')
-    if (rule === 'ignore') continue
+    const source = project.poolMode
+      ? (rate ?? 0) < 0 || storage.poolSide === 'source' || !storage.poolSide && outgoing && !incoming
+      : outgoing && !incoming || !outgoing && !incoming && ((rate ?? 0) < 0 || storage.poolSide === 'source')
+    const buffer = !project.poolMode && outgoing && incoming
     const reading = report.storages[storage.id]
     const actual = reading ? source ? reading.consumedPerSecond : reading.producedPerSecond : undefined
+    const rule = storage.targetMode ?? (storage.poolTargetMode === 'ignore' ? 'ignore' : (rate ?? 0) < 0 || source ? 'exact' : storage.poolTargetMode ?? 'at-least')
+    if (source && actual !== undefined && actual > EPS) summary.externalInputs.push({ source: 'source-storage', storageId: storage.id, resourceKey: `${storage.kind}:${storage.resourceId}`, perSecond: actual, rule, ...(rate !== undefined ? { limit: Math.abs(rate) } : {}) })
+    if (buffer || !source && (storage.drainMode === 'byproduct' || storage.drainMode === 'trash') || rate === undefined || rule === 'ignore') continue
     const goal: GoalAssessment = { ownerId: storage.id, rule, target: Math.abs(rate), actual, resourceKey: `${storage.kind}:${storage.resourceId}`,
       met: !unmet.has(storage.id) && !reading?.targetUnreachable && meets(rule, actual, Math.abs(rate)) }
     summary.goals.push(goal)
-    if (source && actual !== undefined && actual > EPS) summary.externalInputs.push({ source: 'source-storage', storageId: storage.id, resourceKey: goal.resourceKey, perSecond: actual, rule, limit: Math.abs(rate) })
   }
   for (const node of project.nodes) {
     const sectionIds = [node.id, ...(node.extraRecipes ?? []).map((_, index) => `${node.id}#r${index + 1}`)]

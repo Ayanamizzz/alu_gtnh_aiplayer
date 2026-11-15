@@ -29,7 +29,7 @@ function projectFrom(d: DescribedRecipe, target = 1): FactoryProject {
 }
 function noErrors(result: { issues: { severity: string; message: string }[] }): void { assert.deepEqual(result.issues.filter(i => i.severity === 'error'), []) }
 
- test('describe keeps damage, candidates, grids, count-zero tools, chance, fluids and special/fake data in a full binding', () => {
+test('describe keeps damage, candidates, grids, count-zero tools, chance, fluids and special/fake data in a full binding', () => {
   const f = fixture([{ ...row, in: [
     ...row.in, { ore: 'dustIron', n: 2, g: 4, any: [['test:iron', 2], ['test:iron', 3]], more: 7 },
     { any: [['test:dust', 1], ['test:dust', 2]], more: 0, n: 1 },
@@ -51,6 +51,8 @@ function noErrors(result: { issues: { severity: string; message: string }[] }): 
     assert.equal(d.recipe.specialValue, 17)
     assert.deepEqual(d.recipe.nei?.additionalInfo, ['Special value: 17'])
     assert.equal(d.provenance.binding?.snapshot.fake, true)
+    assert.equal(d.provenance.binding?.snapshot.raw.fake, true)
+    assert.deepEqual(d.provenance.binding?.snapshot.raw.fin, [{ f: 'water', name: '水', mb: 1000 }])
     assert.equal(d.provenance.binding?.snapshot.in[1].g, 4)
     assert.match(d.ports[0].handle, /minecraft%3Astone%401$/)
     assert.equal(d.nodeTemplate.machineHandlerId, 'macerator')
@@ -144,6 +146,47 @@ test('source at-most limit and product shortfalls remain visible even when the n
   } finally { await engine.close() }
 })
 
+test('an unlimited native source still means sustained external supply, not inventory already available', async () => {
+  const engine = new PlannerEngine()
+  try {
+    const p = structuredClone(NATIVE_PROJECT_EXAMPLE)
+    delete p.storages![0].targetPerSecond
+    delete p.nodes[0].solvePin
+    const summary = summarizeReport(p, await engine.calculate(p))
+    assert.equal(summary.status, 'needs-external-supply')
+    assert(summary.externalInputs.some(row => (row as { source: string }).source === 'source-storage'))
+    assert(summary.goals.every(g => g.met))
+  } finally { await engine.close() }
+})
+
+test('source caps can produce forced imports without native shortfalls, and the report still requires extra supply', async () => {
+  const engine = new PlannerEngine()
+  try {
+    const p: FactoryProject = { schemaVersion: 1, id: 'forced', name: 'Capped ore with forced dust', planMode: true, solveMode: true,
+      recipes: [
+        { id: 'crush', name: 'Crush', machineType: 'Macerator', minimumTier: 'LV', eut: 30, durationTicks: 20, inputs: [{ kind: 'item', id: 'ore', amount: 1 }], outputs: [{ kind: 'item', id: 'dust', amount: 2 }] },
+        { id: 'press', name: 'Press', machineType: 'Bending Machine', minimumTier: 'LV', eut: 30, durationTicks: 20, inputs: [{ kind: 'item', id: 'dust', amount: 1 }], outputs: [{ kind: 'item', id: 'plate', amount: 1 }] },
+      ], nodes: ['crush', 'press'].map(id => ({ id, recipeId: id, machineCount: 1, parallel: 1, overclockTier: 'LV', enabled: true, position: { x: 0, y: 0 } })),
+      storages: [
+        { id: 'ore-source', kind: 'item', resourceId: 'ore', targetMode: 'at-most', targetPerSecond: -.5, position: { x: 0, y: 0 } },
+        { id: 'product', kind: 'item', resourceId: 'plate', targetMode: 'exact', targetPerSecond: 3, position: { x: 0, y: 0 } },
+      ], edges: [
+        { id: 'supply', source: 'ore-source', target: 'crush', resourceKind: 'item', resourceId: 'ore' },
+        { id: 'dust', source: 'crush', target: 'press', resourceKind: 'item', resourceId: 'dust' },
+        { id: 'out', source: 'press', target: 'product', resourceKind: 'item', resourceId: 'plate' },
+      ], fuelProfiles: [] }
+    noErrors(prepareProject(undefined, p))
+    const nativeReport = await engine.calculate(p) as ThroughputResult
+    const summary = summarizeReport(p, nativeReport)
+    assert.deepEqual(nativeReport.plan?.unmetDrawers, [])
+    assert(summary.goals.every(g => g.met))
+    assert(nativeReport.plan?.forced.some(f => f.side === 'in' && f.resourceKey === 'item:dust' && Math.abs(f.perSecond - 2) < 1e-6))
+    assert.equal(summary.status, 'needs-external-supply')
+    assert(summary.issues.some(i => i.code === 'FORCED_IMPORT' && i.nodeId === 'press'))
+    assert(summary.externalInputs.some(row => (row as { source: string; resourceKey: string }).source === 'forced' && (row as { resourceKey: string }).resourceKey === 'item:dust'))
+  } finally { await engine.close() }
+})
+
 test('shared native extraRecipes round machine time once for the card, not once for every recipe', async () => {
   const engine = new PlannerEngine()
   try {
@@ -160,6 +203,8 @@ test('shared native extraRecipes round machine time once for the card, not once 
     assert(Math.abs(summary.machines[0].fractionalMachines - .6) < 1e-7)
     assert.equal(summary.machines[0].buildMachines, 1)
     assert(summary.goals.every(g => g.met))
+    p.recipes[1].machineType = 'Chemical Reactor'
+    assert(prepareProject(undefined, p).issues.some(i => i.code === 'SHARED_MACHINE_MISMATCH'))
   } finally { await engine.close() }
 })
 
@@ -201,6 +246,21 @@ test('real local packdata describes and solves tool, fluid, probability and heat
     assert.equal(summary.status, 'needs-external-supply')
     assert.equal(summary.machines[0].buildMachines, 1)
     assert.equal(report.nodes[brick.nodeTemplate.id].inputs['item:gregtech:gt.metaitem.01@32306'], undefined)
+    const extractorRef = find('gt.recipe.extractor', 'minecraft:clay', 'minecraft:clay_ball')
+    assert.notEqual(extractorRef, undefined)
+    const extractor = describeRecipes(packdata, [extractorRef!]).recipes[0]
+    const chain = projectFrom(brick, .2)
+    chain.recipes.push(extractor.recipe); chain.nodes.push(extractor.nodeTemplate)
+    chain.storages!.push({ id: 'clay-source', kind: 'item', resourceId: 'minecraft:clay', targetMode: 'at-most', targetPerSecond: -.05, position: { x: -200, y: 0 } })
+    chain.edges.push(
+      { id: 'clay-source-wire', source: 'clay-source', target: extractor.nodeTemplate.id, resourceKind: 'item', resourceId: 'minecraft:clay' },
+      { id: 'clay-ball-wire', source: extractor.nodeTemplate.id, target: brick.nodeTemplate.id, resourceKind: 'item', resourceId: 'minecraft:clay_ball' },
+    )
+    noErrors(prepareProject(packdata, chain))
+    const chainReport = await engine.calculate(chain) as ThroughputResult
+    assert(Math.abs(chainReport.edges['clay-ball-wire'].transferredPerSecond - .2) < 1e-7)
+    assert(Math.abs(chainReport.storages['clay-source'].consumedPerSecond - .05) < 1e-7)
+    assert(summarizeReport(chain, chainReport).goals.every(g => g.met))
     p.nodes[0].solvePin = 1; p.storages![0].targetPerSecond = .3
     const capped = summarizeReport(p, await engine.calculate(p))
     assert.equal(capped.status, 'unmet')

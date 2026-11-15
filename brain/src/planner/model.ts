@@ -1211,7 +1211,7 @@ export interface LocalRecipeBinding {
   datasetFingerprint: string;
   catalogVersion: string;
   nativeFingerprint: string;
-  snapshot: Omit<LocalRecipe, 'ref'>;
+  snapshot: Omit<LocalRecipe, 'ref'> & { /** Exact exported JSON row, including fields not interpreted by RecipeBook. */ raw: Record<string, unknown> };
 }
 export interface RecipeProvenance {
   recipeId: string;
