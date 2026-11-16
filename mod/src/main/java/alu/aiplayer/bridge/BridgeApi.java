@@ -240,6 +240,8 @@ public final class BridgeApi {
                 J.reqCoord(p, "x2"),
                 J.reqHeight(p, "y2"),
                 J.reqCoord(p, "z2")));
+        bridge.register("bot.snapshot", p -> alu.aiplayer.world.FirstPersonSnapshot.capture(
+            bots.requireOnline(J.reqStr(p, "bot")).player(), J.i(p, "radius", 12)));
         bridge.register("world.player", p -> {
             EntityPlayerMP who = MinecraftServer.getServer()
                 .getConfigurationManager()

@@ -260,6 +260,23 @@ export interface WorldBlocks {
   unloaded?: number
 }
 
+/** Experimental bot.snapshot: camera and blocks sampled in one server-thread request. */
+export interface FirstPersonSnapshot {
+  version: 1
+  bot: string
+  dim: number
+  tick: number
+  time: number
+  capturedAt: number
+  camera: {
+    eye: { x: number; y: number; z: number }
+    look: { x: number; y: number; z: number }
+    yaw: number
+    pitch: number
+  }
+  blocks: WorldBlocks
+}
+
 export interface FindMatch {
   x: number
   y: number

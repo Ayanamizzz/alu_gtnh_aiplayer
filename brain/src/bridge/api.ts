@@ -15,6 +15,7 @@ import type {
   DrawersResult,
   EntityInfo,
   FindMatch,
+  FirstPersonSnapshot,
   ItemFilter,
   KeyInfo,
   KeyPressResult,
@@ -71,6 +72,10 @@ export class BridgeApi {
   /** 一个盒子里的全部方块（两角任意顺序，每边最多 64 格）。 */
   worldBlocks(p: Dim & { x1: number; y1: number; z1: number; x2: number; y2: number; z2: number }): Promise<WorldBlocks> {
     return this.call('world.blocks', p)
+  }
+  /** Read-only, atomically sampled camera + bounded nearby world. */
+  botSnapshot(bot: string, radius = 12): Promise<FirstPersonSnapshot> {
+    return this.call('bot.snapshot', { bot, radius })
   }
   worldFind(center: Center, p: { blocks: string[]; radius?: number; limit?: number }): Promise<{ matches?: FindMatch[]; total?: number }> {
     return this.call('world.find', { ...center, ...p })

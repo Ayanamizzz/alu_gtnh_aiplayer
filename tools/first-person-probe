@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Opt-in experiment. Needs tools/testserver setup once and the isolated ports configured in tools/local.env.
+# Build: tools/gradle build; start: tools/first-person-probe start; run: tools/first-person-probe run
+# Replay (no server): tools/first-person-probe replay /tmp/aip/first-person-probe/01-leaves.json /tmp/replay.png
+set -euo pipefail
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+TS="$ROOT/testserver"
+source "$ROOT/tools/local.env"
+[[ ${AIPLAYER_TEST_GAME_PORT:-} == 10486 && ${AIPLAYER_TEST_RCON_PORT:-} == 25607 && ${AIPLAYER_TEST_BRIDGE_PORT:-} == 25622 && ${AIPLAYER_TEST_UNIT:-} == aiplayer-vision-probe-testserver ]] || { echo 'Only the isolated vision probe ports/unit are allowed' >&2; exit 1; }
+OUT=${PROBE_OUT:-/tmp/aip/first-person-probe}
+mkdir -p "$OUT"
+case ${1:-help} in
+  start)
+    ! systemctl --user is-active --quiet "$AIPLAYER_TEST_UNIT" || { echo 'Already running'; exit 1; }
+    grep -qx 'server-ip=127.0.0.1' "$TS/server.properties"
+    grep -qx 'server-port=10486' "$TS/server.properties"
+    grep -qx 'rcon.port=25607' "$TS/server.properties"
+    grep -qx 'enable-query=false' "$TS/server.properties"
+    grep -qx 'spawn-protection=0' "$TS/server.properties"
+    grep -qx 'max-players=4' "$TS/server.properties"
+    "$ROOT/tools/testserver" install
+    [[ ! -f "$TS/console.log" ]] || cp "$TS/console.log" "$OUT/server-previous.log"
+    : > "$TS/console.log"
+    systemd-run --user --collect --unit="$AIPLAYER_TEST_UNIT" --working-directory="$TS" \
+      -p "StandardOutput=append:$TS/console.log" -p "StandardError=append:$TS/console.log" \
+      -p TimeoutStopSec=180 \
+      -p "ExecStop=/usr/bin/python3 /extra_data/gtnh_manager/tools/graceful_stop.py --instance $TS --pid \$MAINPID --timeout 150" \
+      /usr/bin/java -Xms6G -Xmx6G -Dfml.readTimeout=180 -Dfml.queryResult=confirm @java9args.txt -jar lwjgl3ify-forgePatches.jar nogui
+    systemctl --user show "$AIPLAYER_TEST_UNIT" -p MainPID -p ExecMainStartTimestamp -p ExecStop > "$OUT/server-start.txt"
+    sha256sum "$TS/mods/aiplayer-test.jar" > "$OUT/jars.sha256"
+    for ((i=0; i<300; i++)); do
+      if grep -q 'Done (' "$TS/console.log" && grep -q 'Bridge listening on 127.0.0.1:25622' "$TS/console.log"; then
+        echo 'This boot: Done and bridge25622 ready'; exit 0
+      fi
+      systemctl --user is-active --quiet "$AIPLAYER_TEST_UNIT" || { tail -30 "$TS/console.log"; exit 1; }
+      sleep 2
+    done
+    echo 'Startup timeout; inspect the isolated console.log'; exit 1
+    ;;
+  run|replay)
+    mode=$1; shift
+    args=("$@"); [[ $mode != replay ]] || args=(--replay "$@")
+    systemd-run --user --collect --wait --pipe --unit=aiplayer-vision-probe-brain --working-directory="$ROOT" \
+      --setenv="PROBE_OUT=$OUT" "$(command -v node)" "$ROOT/brain/test/live-first-person.ts" "${args[@]}"
+    ;;
+  stop)
+    systemctl --user stop "$AIPLAYER_TEST_UNIT"
+    cp "$TS/console.log" "$OUT/server-final.log"
+    ;;
+  *) echo 'usage: tools/first-person-probe start|run|replay SNAPSHOT.json OUTPUT.png|stop' ;;
+esac

@@ -48,6 +48,8 @@ export interface SceneKind {
   top: RGB
   alpha: number
   shape: Shape
+  /** Experimental first-person mesh: holes in opaque textures must not hide adjacent faces. */
+  cutout?: boolean
   marker?: true
   /** 颜色是不是真的（false：颜色表里没有，是由名字算的，只为了区分）。 */
   known: boolean

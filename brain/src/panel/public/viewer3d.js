@@ -72,7 +72,7 @@ export function buildMesh(scene, cells, opts = {}) {
   const only = opts.only === true
   const maxFaces = opts.maxFaces ?? MAX_FACES
   const kinds = scene.kinds
-  const solid = kinds.map((k) => k !== null && k.shape === 'full' && k.alpha >= 1)
+  const solid = kinds.map((k) => k !== null && k.shape === 'full' && k.alpha >= 1 && !k.cutout)
   const atlas = scene.atlas
   const shown = (y) => y <= cut && (!only || y === cut)
   const at = (x, y, z) => (x < 0 || y < 0 || z < 0 || x >= sx || y >= sy || z >= sz || !shown(y) ? 0 : cells[(y * sz + z) * sx + x])
@@ -148,7 +148,7 @@ export function buildMesh(scene, cells, opts = {}) {
         for (const face of FACES) {
           const neighbor = at(x + face.o[0], y + face.o[1], z + face.o[2])
           // 对面是不透明的整块，或者是同一种半透明方块（一池水中间的面）：这个面看不见
-          if (neighbor !== 0 && (solid[neighbor] || neighbor === cell)) continue
+          if (neighbor !== 0 && (solid[neighbor] || (neighbor === cell && !kind.cutout))) continue
           quad(x, y, z, kind, face, box)
         }
       }
@@ -192,25 +192,40 @@ export function cameraMatrix(camera, aspect) {
   return multiply(projection, view)
 }
 
+/** First-person view: coordinates relative to scene.origin, real server look vector, vertical FOV in degrees. */
+export function firstPersonMatrix(eye, look, aspect, fov = 70) {
+  const near = 0.05, far = 128
+  const f = 1 / Math.tan(fov * Math.PI / 360)
+  const projection = new Float32Array([f / aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) / (near - far), -1, 0, 0, 2 * far * near / (near - far), 0])
+  const z = normalize(look.map((v) => -v))
+  const x = normalize(cross(Math.abs(z[1]) > 0.999 ? [0, 0, 1] : [0, 1, 0], z))
+  const y = cross(z, x)
+  const view = new Float32Array([x[0], y[0], z[0], 0, x[1], y[1], z[1], 0, x[2], y[2], z[2], 0, -dot(x, eye), -dot(y, eye), -dot(z, eye), 1])
+  return multiply(projection, view)
+}
+
 // ── 画 ──
 
-const VERTEX_SHADER = `
+export const VERTEX_SHADER = `
 attribute vec3 p; attribute vec2 uv; attribute vec4 c; attribute float l;
 uniform mat4 m;
 varying vec2 vUv; varying vec4 vC; varying float vL;
 void main() { gl_Position = m * vec4(p, 1.0); vUv = uv; vC = c; vL = l; }`
 
 // 不透明的：贴图乘上染色，贴图镂空的地方露出暗一点的底色。半透明的：贴图有的地方显贴图，没有的地方是方块自己的颜色。
-const FRAGMENT_SHADER = `
+export const FRAGMENT_SHADER = `
 precision mediump float;
-uniform sampler2D atlas; uniform float glass;
+uniform sampler2D atlas; uniform float glass; uniform float cutout;
 varying vec2 vUv; varying vec4 vC; varying float vL;
 void main() {
   vec3 rgb = vC.rgb; float a = vC.a;
   if (vUv.x >= 0.0) {
     vec4 t = texture2D(atlas, vUv);
     if (glass > 0.5) { rgb = mix(vC.rgb, t.rgb, t.a); a = mix(vC.a, 0.92, t.a); }
-    else { rgb = mix(vC.rgb * 0.55, t.rgb * vC.rgb, t.a); }
+    else {
+      if (cutout > 0.5 && t.a < 0.5) discard;
+      rgb = cutout > 0.5 ? t.rgb * vC.rgb : mix(vC.rgb * 0.55, t.rgb * vC.rgb, t.a);
+    }
   }
   gl_FragColor = vec4(rgb * vL, glass > 0.5 ? a : 1.0);
 }`
