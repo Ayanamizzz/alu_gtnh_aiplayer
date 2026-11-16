@@ -5,9 +5,9 @@ import type { FirstPersonSnapshot } from '../src/bridge/protocol.ts'
 import type { Scene } from '../src/render/scene.ts'
 
 const viewer = await import(new URL('../src/panel/public/viewer3d.js', import.meta.url).href) as {
-  firstPersonMatrix(eye: number[], look: number[], aspect: number, fov?: number): Float32Array
+  firstPersonMatrix(eye: number[], look: number[], aspect: number, fov?: number, yaw?: number): Float32Array
   expandRuns(scene: Scene): Uint16Array
-  buildMesh(scene: Scene, cells: Uint16Array): { faces: number }
+  buildMesh(scene: Scene, cells: Uint16Array): { faces: number; opaque: Float32Array }
 }
 
 function screen(m: Float32Array, point: number[]) {
@@ -51,6 +51,40 @@ test('see through leaf holes: the adjacent leaves and wall still have visible fa
   assert.deepEqual(snapshot.blocks.runs, [1, 2, 2, 1])
   assert.equal(snapshot.blocks.palette[1].id, 'minecraft:leaves')
 })
+
+test('mod leaves sharing the leaf material retain the adjacent wall face behind their holes', () => {
+  const modded = structuredClone(snapshot)
+  modded.blocks.palette[1].id = 'BiomesOPlenty:leaves1'
+  const { scene } = snapshotScene(modded, packdata)
+  const mesh = viewer.buildMesh(scene, viewer.expandRuns(scene))
+  assert.equal(mesh.faces, 17)
+  // The wall starts at x=2. Its near face must exist, not just its distant back face.
+  // Six vertices per face, ten floats per vertex; stone is white before texture/shade.
+  const wall = []
+  for (let at = 0; at < mesh.opaque.length; at += 60) {
+    const face = mesh.opaque.subarray(at, at + 60)
+    if ([0, 10, 20, 30, 40, 50].every(i => face[i] === 2 && face[i + 5] === 1 && face[i + 6] === 1 && face[i + 7] === 1)) wall.push(face)
+  }
+  assert.equal(wall.length, 1, 'the stone surface touching the leaves is rendered')
+})
+
+for (const yaw of [0, 90, 180, 270]) {
+  test(`looking almost or exactly vertically at yaw ${yaw} keeps screen-right without a roll flip`, () => {
+    const heading = yaw * Math.PI / 180
+    // Independent Minecraft heading contract: yaw0 right=west; yaw90 right=north.
+    const right = [[-1, 0, 0], [0, 0, -1], [1, 0, 0], [0, 0, 1]][yaw / 90]
+    for (const pitch of [-87, -88, -90, 90]) {
+      const angle = pitch * Math.PI / 180
+      const look = [-Math.sin(heading) * Math.cos(angle), -Math.sin(angle), Math.cos(heading) * Math.cos(angle)]
+      const matrix = viewer.firstPersonMatrix([0, 0, 0], look, 16 / 9, 70, yaw)
+      const center = look.map(v => v * 5)
+      const projected = screen(matrix, center)
+      assert.ok(Math.abs(projected[0]) < 1e-5 && Math.abs(projected[1]) < 1e-5, `pitch ${pitch} keeps look centred`)
+      const edge = screen(matrix, center.map((v, i) => v + right[i]))
+      assert.ok(edge[0] > 0.1 && Math.abs(edge[1]) < 1e-5, `pitch ${pitch} keeps the expected right side`)
+    }
+  })
+}
 
 test('unloaded cells are visible unknowns, and preparing a picture does not rewrite the stored observation', () => {
   const unknown = structuredClone(snapshot)

@@ -46,7 +46,7 @@ export class ChromePipe {
       '--headless=new', '--remote-debugging-pipe', `--user-data-dir=${profile}`,
       '--no-first-run', '--no-default-browser-check', '--disable-background-networking',
       '--disable-component-update', '--disable-sync', '--disable-extensions',
-      '--disable-crashpad-for-testing', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', 'about:blank',
+      '--use-angle=swiftshader', '--enable-unsafe-swiftshader', 'about:blank',
     ], { detached: process.platform !== 'win32', stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'] })
     this.exited = new Promise(resolve => this.process.once('close', () => resolve()))
     this.input = this.process.stdio[4] as Readable
