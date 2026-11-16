@@ -55,9 +55,9 @@ export class ChromePipe {
     this.process.stderr?.on('error', error => this.fail(error))
     this.process.on('error', error => this.fail(new Error(`First-person renderer unavailable: Chrome spawn failed: ${error.message}`, { cause: error })))
     this.process.on('exit', (code, signal) => this.fail(new Error(`Renderer Chrome exited (${signal ?? code})`)))
-    this.input.on('error', error => this.fail(error))
+    this.input.on('error', error => this.fail(new Error(`Renderer Chrome CDP read failed: ${error.message}`, { cause: error })))
     this.input.on('end', () => this.fail(new Error('Renderer Chrome CDP pipe closed')))
-    this.output.on('error', error => this.fail(error))
+    this.output.on('error', error => this.fail(new Error(`Renderer Chrome CDP write failed: ${error.message}`, { cause: error })))
     this.input.setEncoding('utf8')
     this.input.on('data', (data: string) => this.receive(data))
   }
@@ -111,7 +111,9 @@ export class ChromePipe {
       this.pending.set(id, { resolve, reject, cleanup })
       signal?.addEventListener('abort', abort, { once: true })
       try {
-        this.output.write(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }) + '\0', error => { if (error) this.fail(error) })
+        this.output.write(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }) + '\0', error => {
+          if (error) this.fail(new Error(`Renderer Chrome CDP write failed: ${error.message}`, { cause: error }))
+        })
       } catch (cause) { this.fail(new Error('Renderer Chrome CDP write failed', { cause })) }
     })
   }
