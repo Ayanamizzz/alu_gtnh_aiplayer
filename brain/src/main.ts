@@ -24,6 +24,7 @@ import { useLocalNames } from './tools/format.ts'
 import { PanelServer } from './panel/server.ts'
 import { PlannerEngine } from './planner/engine.ts'
 import { PlannerWorkspace } from './planner/workspace.ts'
+import { FirstPersonRenderer } from './vision/renderer.ts'
 import { ActivityLog } from './store/activity-log.ts'
 import { ChatLog } from './store/chat-log.ts'
 import { RunLogStore } from './agent/run-log.ts'
@@ -174,6 +175,7 @@ async function main(): Promise<void> {
   useLocalNames(packdata.items, packdata.fluids)
   const design = new DesignWorkspace({ dataDir, packdata })
   const planner = new PlannerWorkspace({ directory: path.join(dataDir, 'production-plans'), packdata, engine: new PlannerEngine() })
+  const firstPerson = new FirstPersonRenderer(packdata)
   const pictures = new PictureStore(dataDir)
 
   // ── bridge ──
@@ -270,6 +272,7 @@ async function main(): Promise<void> {
     packdata,
     design,
     planner,
+    firstPerson,
     feedback,
     methods,
     todo,
@@ -442,7 +445,7 @@ async function main(): Promise<void> {
     force.unref()
     void (async () => {
       reminders.stop()
-      await Promise.all([agent.stop(), planner.close()])
+      await Promise.all([agent.stop(), planner.close(), firstPerson.close()])
       bridgeClient.stop()
       await panel.close()
       resumeFile.flush()

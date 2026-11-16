@@ -9,7 +9,7 @@ import { LIVE_IMAGES_MAX } from '../src/agent/agent.ts'
 import { countImages } from '../src/llm/index.ts'
 import type { GenerateRequest, ToolResultPart } from '../src/llm/index.ts'
 import { decodePng } from '../src/design/index.ts'
-import { PICTURES_KEPT, PictureStore } from '../src/store/pictures.ts'
+import { PICTURES_KEPT, PictureStore, pictureMediaType } from '../src/store/pictures.ts'
 import { NO_VISION_NOTE } from '../src/tools/pictures.ts'
 import { told, makeAgent, reply } from './agent-harness.ts'
 import type { MakeAgentOptions } from './agent-harness.ts'
@@ -110,6 +110,22 @@ describe('agent：把图给模型看', () => {
       ['look4', 1, false],
       ['look5', 1, false],
     ])
+  })
+
+  it('JPEG observation bytes remain JPEG across restart and are pruned together with older PNG observations', (t) => {
+    const tmp = tmpDir()
+    t.after(tmp.cleanup)
+    const jpg = fs.readFileSync(new URL('./fixtures/vision-format.jpg', import.meta.url))
+    const store = new PictureStore(tmp.dir)
+    const id = store.save(jpg, undefined, 'image/jpeg')
+    assert.ok(fs.existsSync(path.join(store.dir, `${id}.jpg`)))
+    assert.equal(fs.existsSync(path.join(store.dir, `${id}.png`)), false)
+    const restarted = new PictureStore(tmp.dir)
+    assert.deepEqual(restarted.get(id), jpg)
+    assert.equal(pictureMediaType(restarted.get(id)!), 'image/jpeg')
+    for (let n = 0; n < PICTURES_KEPT; n++) store.save(n % 2 ? jpg : Buffer.from('legacy png test image'))
+    assert.equal(store.get(id), undefined)
+    assert.equal(fs.readdirSync(store.dir).filter(file => /\.(png|jpg)$/.test(file)).length, PICTURES_KEPT)
   })
 
   it('留给面板看的图只留最近的若干张，旧的自动清掉；编号不合规的取不到', (t) => {

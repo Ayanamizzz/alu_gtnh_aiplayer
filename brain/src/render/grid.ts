@@ -55,7 +55,8 @@ export function gridFromBlocks(raw: unknown, maxSide: number = AREA_MAX_SIDE): V
   if (!Array.isArray(raw.palette) || raw.palette.length === 0 || raw.palette.length > 65535) throw new GridError('the palette is missing')
   const kinds: BlockKind[] = raw.palette.map((entry: unknown, i: number) => {
     if (!isRecord(entry) || typeof entry.id !== 'string' || entry.id.length === 0) throw new GridError(`palette entry ${i} has no block id`)
-    const meta = typeof entry.meta === 'number' && Number.isInteger(entry.meta) && entry.meta >= 0 && entry.meta <= 15 ? entry.meta : 0
+    // GTNH can expose extended block metadata (e.g. gt.blockores2/24032); do not turn distinct world kinds into meta 0.
+    const meta = typeof entry.meta === 'number' && Number.isInteger(entry.meta) && entry.meta >= 0 && entry.meta <= 0x7fffffff ? entry.meta : 0
     return { id: entry.id, meta }
   })
   if (!isAir(kinds[0]!)) throw new GridError('palette entry 0 must be air')

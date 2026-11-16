@@ -19,6 +19,7 @@ import { speakInChat } from '../tools/chat.ts'
 import { clip, compactJson } from '../tools/format.ts'
 import type { DesignWorkspace } from '../design/index.ts'
 import type { PlannerWorkspace } from '../planner/workspace.ts'
+import type { FirstPersonRenderer } from '../vision/renderer.ts'
 import type { PackData } from '../packdata/index.ts'
 import { LEGACY_TOOLS, QUERY_TOOLS, QuestProgressCache, SPEAKING_TOOLS, SurroundingsCache, modelToolSpecs, runTool } from '../tools/index.ts'
 import type { HelperAccess, LineName, ManualAccess, MemoryAccess, ProgramToolResult, ReminderAccess, Tool, ToolContext, ToolResult } from '../tools/index.ts'
@@ -238,7 +239,7 @@ export interface AgentDeps {
   /** 当前用的模型能不能看图（模型上的开关）。没提供就是不能：带图的工具只给文字说明。 */
   canSeeImages?(): boolean
   /** 工具结果带的图存一份给面板的对话日志显示；没提供就不存。 */
-  pictures?: { save(png: Buffer, blocks?: unknown): string }
+  pictures?: { save(bytes: Buffer, blocks?: unknown, mediaType?: 'image/png' | 'image/jpeg'): string }
   bridge: BridgeApi
   tools: readonly Tool[]
   memory: MemoryAccess & { render(): string }
@@ -249,6 +250,7 @@ export interface AgentDeps {
   /** 自己出设计用的：跑程序的沙箱、图纸草稿、主人传的图片。 */
   design?: DesignWorkspace
   planner?: PlannerWorkspace
+  firstPerson?: Pick<FirstPersonRenderer, 'render'>
   /** 例程的各项上限；不给用默认的（时长那两项以 settings 里的为准）。 */
   routineLimits?: Partial<RoutineLimits>
   /** 程序（例程、run_program）每次运行的全量记录落在哪；不给就不落盘。 */
@@ -1381,7 +1383,7 @@ export class Agent {
         // 图存一份给面板看（模型看不了图时主人照样看得到）
         if (images.length > 0 && this.deps.pictures) {
           try {
-            entry.pictures = images.map((image) => this.deps.pictures!.save(image.data, image.blocks))
+            entry.pictures = images.map((image) => this.deps.pictures!.save(image.data, image.blocks, image.mediaType))
             const scenes = entry.pictures.filter((_, n) => images[n]!.blocks !== undefined)
             if (scenes.length > 0) entry.scenes = scenes
           } catch (e) {
@@ -2047,6 +2049,7 @@ export class Agent {
       ...(this.deps.packdata ? { packdata: this.deps.packdata } : {}),
       ...(this.deps.design ? { design: this.deps.design } : {}),
       ...(this.deps.planner ? { planner: this.deps.planner } : {}),
+      ...(this.deps.firstPerson ? { firstPerson: this.deps.firstPerson } : {}),
       ...(this.deps.methods ? { methods: this.deps.methods } : {}),
       ...(this.deps.todo ? { todo: this.deps.todo } : {}),
       ...(feedback

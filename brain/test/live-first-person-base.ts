@@ -16,11 +16,11 @@ import type { FirstPersonSnapshot } from '../src/bridge/protocol.ts'
 import { parseAtlas } from '../src/packdata/textures.ts'
 import { parseBlockColor } from '../src/packdata/blocks.ts'
 import type { PackData } from '../src/packdata/index.ts'
-import { FirstPersonRenderer, firstPersonTool, snapshotScene } from '../src/experimental/first-person.ts'
-import type { SnapshotPicture } from '../src/experimental/first-person.ts'
+import { FirstPersonRenderer, snapshotScene } from '../src/vision/renderer.ts'
+import type { SnapshotPicture } from '../src/vision/renderer.ts'
 import { decodePng } from '../src/design/index.ts'
 import { gridFromBlocks } from '../src/render/index.ts'
-import { runTool } from '../src/tools/index.ts'
+import { ALL_TOOLS, runTool } from '../src/tools/index.ts'
 import { looksFor } from '../src/tools/pictures.ts'
 import type { ToolContext } from '../src/tools/types.ts'
 
@@ -117,8 +117,8 @@ async function survey() {
 async function capture(plans: Site[]) {
   renderer ??= new FirstPersonRenderer(await loadPack())
   let lastPicture: SnapshotPicture | undefined
-  const tool = firstPersonTool({ render: async snapshot => { lastPicture = await renderer!.render(snapshot); return lastPicture } })
-  const ctx = { bridge: game, botName: BOT, canSeeImages: () => true, now: Date.now } as ToolContext
+  const firstPerson: Pick<FirstPersonRenderer, 'render'> = { render: async (snapshot, options) => { lastPicture = await renderer!.render(snapshot, options); return lastPicture } }
+  const ctx = { bridge: game, botName: BOT, firstPerson, canSeeImages: () => true, now: Date.now } as ToolContext
   for (const site of plans) {
     assert.ok(site.shots.length > 0)
     await place(site.feet)
@@ -142,7 +142,7 @@ async function capture(plans: Site[]) {
         z: Math.round(eye.z + Math.cos(yaw) * Math.cos(pitch) * distance - 0.5),
       }
       await game.botLook(BOT, target)
-      const result = await runTool([tool], ctx, tool.name, { radius: shot.radius ?? 16 })
+      const result = await runTool(ALL_TOOLS, ctx, 'view_area', { view: 'eyes', radius: shot.radius ?? 16 })
       assert.ok(!result.isError, result.content)
       assert.equal(result.images?.length, 1)
       assert.equal(result.images[0].mediaType, 'image/jpeg')

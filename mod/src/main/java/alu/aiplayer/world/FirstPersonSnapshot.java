@@ -10,7 +10,7 @@ import com.google.gson.JsonObject;
 import alu.aiplayer.act.Sight;
 import alu.aiplayer.bridge.RpcException;
 
-/** Experimental read-only observation. Called once on the server thread, without yielding or loading chunks. */
+/** Read-only eye-level observation. Called once on the server thread, without yielding or loading chunks. */
 public final class FirstPersonSnapshot {
 
     private FirstPersonSnapshot() {}
@@ -25,6 +25,7 @@ public final class FirstPersonSnapshot {
 
     public static JsonObject capture(EntityPlayerMP player, int radius) {
         if (radius < 2 || radius > 24) throw RpcException.badRequest("radius must be between 2 and 24");
+        long began = System.nanoTime();
         World w = player.worldObj;
         Vec3 eye = Sight.eyes(player), look = Sight.look(player);
         int x = MathHelper.floor_double(eye.xCoord), y = MathHelper.floor_double(eye.yCoord);
@@ -45,6 +46,7 @@ public final class FirstPersonSnapshot {
         // WorldQueries.blocks checks blockExists before each read and marks missing chunks as '?'.
         out.add("blocks", WorldQueries.blocks(w, x - radius, Math.max(0, y - radius), z - radius,
             x + radius, Math.min(255, y + radius), z + radius));
+        out.addProperty("captureDurationMs", (System.nanoTime() - began) / 1_000_000.0);
         return out;
     }
 }

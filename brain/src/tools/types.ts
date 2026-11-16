@@ -5,6 +5,7 @@ import type { TaskInfo } from '../bridge/protocol.ts'
 import type { DesignWorkspace } from '../design/index.ts'
 import type { PackData } from '../packdata/index.ts'
 import type { PlannerWorkspace } from '../planner/workspace.ts'
+import type { FirstPersonRenderer } from '../vision/renderer.ts'
 import type { LogPage, LogQuery } from '../store/activity-log.ts'
 import type { FeedbackInput } from '../store/feedback.ts'
 import type { ChatLine } from '../store/chat-log.ts'
@@ -189,6 +190,8 @@ export interface ToolContext {
   design?: DesignWorkspace
   /** Offline native production calculations and immutable analysis records; never a body action. */
   planner?: PlannerWorkspace
+  /** On-demand reconstruction of a frozen eye-level observation; never moves the body. */
+  firstPerson?: Pick<FirstPersonRenderer, 'render'>
   /** “基地的做法”（store/methods.ts）。上层没提供时 base_methods、set_base_method 用不了，别处也不带它的记录。 */
   methods?: MethodAccess
   /** 工作清单（store/todo.ts）。上层没提供时 todo 用不了。 */

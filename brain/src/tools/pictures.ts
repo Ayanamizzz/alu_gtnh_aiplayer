@@ -5,6 +5,7 @@
 // 模型直接调也照常执行。
 
 import { boxPieces, pieceCount } from './reach.ts'
+import { firstPersonView } from './first-person.ts'
 import { BridgeError } from '../bridge/protocol.ts'
 import type { PlayerInfo } from '../bridge/protocol.ts'
 import { decodePng } from '../design/index.ts'
@@ -159,14 +160,20 @@ export const viewArea: Tool = {
   picture: true,
   brief: '{x1..z2 | radius?}: a box of the world in words, layer by layer -> kinds[]',
   description:
-    `Get a picture of a box of the world, drawn from block colours: a schematic drawing for shape and layout, not a screenshot. Give two opposite corners (x1, y1, z1) and (x2, y2, z2), each side at most ${AREA_MAX_SIDE} blocks, or none to look around yourself. Details: pictures manual.`,
+    `Inspect actual world blocks. view "eyes": low-res first-person reconstruction from your current eye/aim, not a client screenshot; no entities or exact machine shapes. Other views: block-colour schematics, corners or nearby radius, at most ${AREA_MAX_SIDE} per side.`,
   inputSchema: obj({
     ...boxProps,
     radius: int(`Without corners: how far to look around yourself, in blocks each way (default ${AREA_DEFAULT_RADIUS}).`, { min: 2, max: AREA_MAX_RADIUS }),
     ...VIEW_PARAMS,
+    view: str('eyes: actual eye/aim, radius 2–24, no corners/from/layer. iso (default): corner schematic; top: down; side: level; layer: one horizontal layer.', { enum: ['eyes', ...VIEWS] }),
     layer: int('For view "layer": the y of the layer.', { min: 0, max: 255 }),
   }),
   async run(ctx, i: AreaInput): Promise<ToolResult | string> {
+    if (i.view === 'eyes') {
+      const result = await firstPersonView(ctx, i)
+      if (!result.isError && !canSee(ctx)) result.content = `${NO_VISION_NOTE}\n${result.content}`
+      return result
+    }
     const corners = [i.x1, i.y1, i.z1, i.x2, i.y2, i.z2]
     const given = corners.filter((v) => v !== undefined).length
     if (given !== 0 && given !== 6) return fail('Give all of x1, y1, z1, x2, y2, z2 (two opposite corners), or none of them to look around yourself.')

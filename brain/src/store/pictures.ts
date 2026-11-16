@@ -7,6 +7,12 @@ import path from 'node:path'
 import { FILE_MODE, ensureDir } from './files.ts'
 
 export const PICTURES_KEPT = 80
+export type PictureMediaType = 'image/png' | 'image/jpeg'
+
+/** Also recognizes a JPEG saved with the legacy .png extension. */
+export function pictureMediaType(bytes: Buffer): PictureMediaType {
+  return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff ? 'image/jpeg' : 'image/png'
+}
 
 const ID = /^[a-z0-9]{1,24}-[a-z0-9]{1,12}$/
 
@@ -21,13 +27,14 @@ export class PictureStore {
   }
 
   /**
-   * 存一张 PNG，返回它的编号（面板用 /api/pictures/file?id= 取）。
+   * 保存工具返回的原始PNG/JPEG，返回编号（面板用 /api/pictures/file?id= 取）。
    * blocks 是画这张图用的盒子（render/scene.ts 的 StoredBlocks），有的话一起存，面板用 /api/pictures/model?id= 取。
    */
-  save(png: Buffer, blocks?: unknown): string {
+  save(bytes: Buffer, blocks?: unknown, mediaType: PictureMediaType = pictureMediaType(bytes)): string {
     // 时间在前、序号定长：按名字排就是按先后排。末尾两位随机数只为了重启后同一毫秒里不撞名
     const id = `${Date.now().toString(36).padStart(9, '0')}-${(this.seq++ % 1679616).toString(36).padStart(4, '0')}${Math.floor(Math.random() * 1296).toString(36).padStart(2, '0')}`
-    fs.writeFileSync(path.join(this.dir, `${id}.png`), png, { mode: FILE_MODE })
+    const extension = mediaType === 'image/jpeg' ? 'jpg' : 'png'
+    fs.writeFileSync(path.join(this.dir, `${id}.${extension}`), bytes, { mode: FILE_MODE })
     if (blocks !== undefined) fs.writeFileSync(path.join(this.dir, `${id}.json`), JSON.stringify(blocks), { mode: FILE_MODE })
     this.prune()
     return id
@@ -45,18 +52,17 @@ export class PictureStore {
 
   get(id: string): Buffer | undefined {
     if (!ID.test(id)) return undefined
-    try {
-      return fs.readFileSync(path.join(this.dir, `${id}.png`))
-    } catch {
-      return undefined
+    for (const extension of ['png', 'jpg']) {
+      try { return fs.readFileSync(path.join(this.dir, `${id}.${extension}`)) } catch { /* try the other supported format */ }
     }
+    return undefined
   }
 
   /** 只留最新的 PICTURES_KEPT 张。编号以时间开头、定长，按名字排就是按时间排。 */
   private prune(): void {
     let files: string[]
     try {
-      files = fs.readdirSync(this.dir).filter((f) => f.endsWith('.png'))
+      files = fs.readdirSync(this.dir).filter((f) => /\.(png|jpg)$/.test(f))
     } catch {
       return
     }

@@ -1317,7 +1317,7 @@ describe('面板：对话、AI 玩家、记忆', () => {
     assert.deepEqual([model.json.name, model.json.tier, model.json.tiers, model.json.size, model.json.controller], ['大型蒸汽离心机', 2, [1, 2], { x: 3, y: 2, z: 3 }, [1, 0, 2]])
     assert.deepEqual(model.json.blocks.map((b: { name: string; n: number }) => [b.name, b.n]), [['脱氧钢机械方块', 15], ['钢齿轮箱机械方块', 1], ['大型蒸汽离心机', 1]])
     assert.deepEqual(model.json.runs, [1, 4, 2, 1, 1, 2, 3, 1, 1, 5, 0, 1, 1, 4])
-    assert.deepEqual(model.json.kinds.slice(1).map((k: { key: string; count: number }) => [k.key, k.count]), [['gregtech:gt.blockcasings2', 15], ['gregtech:gt.blockcasings2/3', 1], ['gregtech:gt.blockmachines', 1]])
+    assert.deepEqual(model.json.kinds.slice(1).map((k: { key: string; count: number }) => [k.key, k.count]), [['gregtech:gt.blockcasings2', 15], ['gregtech:gt.blockcasings2/3', 1], ['gregtech:gt.blockmachines/31080', 1]])
     assert.equal(model.json.structureInfo[2], '控制器: 底层，正面中央')
     // 不给等级就是最低的那一级；没有的等级、没有的机器是 404
     assert.equal((await s.call('GET', `/api/structures/model?id=${encodeURIComponent(S.centrifuge.id)}&meta=${S.centrifuge.meta}`)).json.tier, 1)
@@ -1487,6 +1487,21 @@ describe('面板：对话、AI 玩家、记忆', () => {
     for (const bad of ['nope', '', '../config.json', `${id}x`]) {
       assert.equal((await s.call('GET', `/api/pictures/file?id=${encodeURIComponent(bad)}`)).status, 404, bad)
     }
+  })
+
+  it('first-person JPEG observations are served as authenticated JPEG, including legacy mislabeled files', async (t) => {
+    const s = await setup(t)
+    await s.login()
+    const jpg = fs.readFileSync(new URL('./fixtures/vision-format.jpg', import.meta.url))
+    const id = s.pictures.save(jpg, undefined, 'image/jpeg')
+    for (const legacy of [false, true]) {
+      if (legacy) fs.renameSync(path.join(s.pictures.dir, `${id}.jpg`), path.join(s.pictures.dir, `${id}.png`))
+      const res = await fetch(`${s.origin}/api/pictures/file?id=${id}`, { headers: { cookie: s.cookie() } })
+      assert.equal(res.status, 200)
+      assert.equal(res.headers.get('content-type'), 'image/jpeg')
+      assert.deepEqual(Buffer.from(await res.arrayBuffer()), jpg)
+    }
+    assert.equal((await fetch(`${s.origin}/api/pictures/file?id=${id}`)).status, 401)
   })
 
   it('图纸页的图片：上传浏览器缩好的 PNG，列得出、页面上显示得出、它的程序读得到，可以删除；不是 PNG 的、太大的、名字带路径的存不进去', async (t) => {

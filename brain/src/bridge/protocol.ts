@@ -262,6 +262,8 @@ export interface WorldBlocks {
 
 /** Experimental bot.snapshot: camera and blocks sampled in one server-thread request. */
 export interface FirstPersonSnapshot {
+  /** Server-thread snapshot assembly, excluding network/tick wait and response serialization. */
+  captureDurationMs?: number
   version: 1
   bot: string
   dim: number

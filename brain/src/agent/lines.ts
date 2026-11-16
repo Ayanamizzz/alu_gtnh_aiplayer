@@ -19,6 +19,7 @@ import type { DesignWorkspace } from '../design/index.ts'
 import type { LlmClient } from '../llm/index.ts'
 import type { PackData } from '../packdata/index.ts'
 import type { PlannerWorkspace } from '../planner/workspace.ts'
+import type { FirstPersonRenderer } from '../vision/renderer.ts'
 import type { ActivityLog } from '../store/activity-log.ts'
 import type { ChatLog } from '../store/chat-log.ts'
 import type { FeedbackStore } from '../store/feedback.ts'
@@ -74,13 +75,14 @@ export interface LinesDeps {
   /** 等身体上线最多等多久（不给是 JOIN_SPAWN_WAIT_MS；测试里调小）。 */
   joinSpawnWaitMs?: number
   /** 工具结果带的图存一份给面板的对话日志显示；没提供就不存。 */
-  pictures?: { save(png: Buffer, blocks?: unknown): string }
+  pictures?: { save(bytes: Buffer, blocks?: unknown, mediaType?: 'image/png' | 'image/jpeg'): string }
   bridge: BridgeApi
   memory: MemoryAccess & { render(): string }
   manuals: ManualAccess
   packdata?: PackData
   design?: DesignWorkspace
   planner?: PlannerWorkspace
+  firstPerson?: Pick<FirstPersonRenderer, 'render'>
   routineLimits?: Partial<RoutineLimits>
   runLogs?: RunLogStore
   feedback?: FeedbackStore
@@ -248,6 +250,7 @@ export class Lines {
       ...(deps.packdata ? { packdata: deps.packdata } : {}),
       ...(deps.design ? { design: deps.design } : {}),
       ...(deps.planner ? { planner: deps.planner } : {}),
+      ...(deps.firstPerson ? { firstPerson: deps.firstPerson } : {}),
       ...(deps.routineLimits ? { routineLimits: deps.routineLimits } : {}),
       ...(deps.runLogs ? { runLogs: deps.runLogs } : {}),
       ...(deps.feedback ? { feedback: deps.feedback } : {}),
@@ -290,6 +293,7 @@ export class Lines {
       ...(deps.packdata ? { packdata: deps.packdata } : {}),
       ...(deps.design ? { design: deps.design } : {}),
       ...(deps.planner ? { planner: deps.planner } : {}),
+      ...(deps.firstPerson ? { firstPerson: deps.firstPerson } : {}),
       ...(deps.runLogs ? { runLogs: deps.runLogs } : {}),
       ...(deps.feedback ? { feedback: deps.feedback } : {}),
       ...(deps.methods ? { methods: deps.methods } : {}),

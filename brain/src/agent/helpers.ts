@@ -23,6 +23,7 @@ import { LlmError, keepLatestImages, textOf } from '../llm/index.ts'
 import type { GenerateRequest, GenerateResult, LlmClient, Message, ToolResultPart, UserPart } from '../llm/index.ts'
 import type { PackData } from '../packdata/index.ts'
 import type { PlannerWorkspace } from '../planner/workspace.ts'
+import type { FirstPersonRenderer } from '../vision/renderer.ts'
 import type { ActivityInput, ActivityLog, ActivityModelCall } from '../store/activity-log.ts'
 import type { FeedbackStore, FeedbackToolCall } from '../store/feedback.ts'
 import type { HelperRecord, HelperState, HelperStep, HelperStore, HelperSummary } from '../store/helpers.ts'
@@ -60,13 +61,14 @@ export interface HelpersDeps {
   packdata?: PackData
   design?: DesignWorkspace
   planner?: PlannerWorkspace
+  firstPerson?: Pick<FirstPersonRenderer, 'render'>
   methods?: MethodAccess
   feedback?: FeedbackStore
   versions?(): { brain: string; mod?: string }
   chatLog?: ChatLogAccess
   log: ActivityLog
   runLogs?: RunLogStore
-  pictures?: { save(png: Buffer, blocks?: unknown): string }
+  pictures?: { save(bytes: Buffer, blocks?: unknown, mediaType?: 'image/png' | 'image/jpeg'): string }
   /** 任务书进度、附近机器的短时缓存：和两条线共用一份。 */
   caches: { questProgress: QuestProgressCache; surroundings: SurroundingsCache }
   /** 今天已经用掉的 token（两条线和子思维合计）。 */
@@ -391,7 +393,7 @@ export class Helpers {
         const images = res.images ?? []
         if (images.length > 0 && this.deps.pictures) {
           try {
-            entry.pictures = images.map((image) => this.deps.pictures!.save(image.data, image.blocks))
+            entry.pictures = images.map((image) => this.deps.pictures!.save(image.data, image.blocks, image.mediaType))
             const scenes = entry.pictures.filter((_, n) => images[n]!.blocks !== undefined)
             if (scenes.length > 0) entry.scenes = scenes
           } catch (e) {
@@ -555,6 +557,7 @@ export class Helpers {
       ...(deps.packdata ? { packdata: deps.packdata } : {}),
       ...(deps.design ? { design: deps.design } : {}),
       ...(deps.planner ? { planner: deps.planner } : {}),
+      ...(deps.firstPerson ? { firstPerson: deps.firstPerson } : {}),
       ...(deps.methods ? { methods: deps.methods } : {}),
       ...(feedback
         ? {

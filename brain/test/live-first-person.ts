@@ -13,11 +13,11 @@ import type { FirstPersonSnapshot } from '../src/bridge/protocol.ts'
 import { parseAtlas } from '../src/packdata/textures.ts'
 import { parseBlockColor } from '../src/packdata/blocks.ts'
 import type { PackData } from '../src/packdata/index.ts'
-import { FirstPersonRenderer, firstPersonTool } from '../src/experimental/first-person.ts'
-import type { SnapshotPicture } from '../src/experimental/first-person.ts'
+import { FirstPersonRenderer } from '../src/vision/renderer.ts'
+import type { SnapshotPicture } from '../src/vision/renderer.ts'
 import { decodePng } from '../src/design/index.ts'
 import { gridFromBlocks } from '../src/render/index.ts'
-import { runTool } from '../src/tools/index.ts'
+import { ALL_TOOLS, runTool } from '../src/tools/index.ts'
 import type { ToolContext } from '../src/tools/types.ts'
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url))
@@ -55,13 +55,13 @@ if (process.argv[2] === '--replay') {
     console.log(result.stdout.trim())
   }
   let lastPicture: SnapshotPicture | undefined
-  const tool = firstPersonTool({ render: async snapshot => { lastPicture = await renderer.render(snapshot); return lastPicture } })
-  // Only the fields consumed by this query-only tool; no agent loop, owner session or model configuration.
-  const ctx = { bridge: game, botName: BOT, packdata, canSeeImages: () => true, now: Date.now } as ToolContext
+  const firstPerson: Pick<FirstPersonRenderer, 'render'> = { render: async (snapshot, options) => { lastPicture = await renderer.render(snapshot, options); return lastPicture } }
+  // Ordinary registered tool, real rendering and body; only the model's choice to call it is scripted.
+  const ctx = { bridge: game, botName: BOT, packdata, firstPerson, canSeeImages: () => true, now: Date.now } as ToolContext
   const results: unknown[] = []
   async function take(name: string) {
     // This is the actual brain tool dispatch path, simulating only the model's choice to look.
-    const result = await runTool([tool], ctx, tool.name, { radius: 12 })
+    const result = await runTool(ALL_TOOLS, ctx, 'view_area', { view: 'eyes', radius: 12 })
     assert.ok(!result.isError, result.content)
     assert.equal(result.images?.length, 1)
     assert.equal(result.images[0].mediaType, 'image/jpeg')

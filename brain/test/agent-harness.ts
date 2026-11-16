@@ -15,6 +15,7 @@ import type { RoutineLimits } from '../src/agent/routine.ts'
 import { RunLogStore } from '../src/agent/run-log.ts'
 import type { DesignWorkspace } from '../src/design/index.ts'
 import type { PlannerWorkspace } from '../src/planner/workspace.ts'
+import type { FirstPersonRenderer } from '../src/vision/renderer.ts'
 import type { PackData } from '../src/packdata/index.ts'
 import { BridgeApi } from '../src/bridge/api.ts'
 import type { Requester } from '../src/bridge/api.ts'
@@ -255,6 +256,7 @@ export interface MakeAgentOptions {
   /** 跑程序的沙箱和草稿（给了才有 run_program、例程这些）。 */
   design?: DesignWorkspace
   planner?: PlannerWorkspace
+  firstPerson?: Pick<FirstPersonRenderer, 'render'>
   /** 例程的上限（测试里调小）。 */
   routineLimits?: Partial<RoutineLimits>
   /** 本地资料（物品表、配方册……）。 */
@@ -341,6 +343,7 @@ export function makeAgent(opts: MakeAgentOptions = {}): AgentHarness {
     ...(opts.pictures ? { pictures: opts.pictures } : {}),
     ...(opts.design ? { design: opts.design } : {}),
     ...(opts.planner ? { planner: opts.planner } : {}),
+    ...(opts.firstPerson ? { firstPerson: opts.firstPerson } : {}),
     ...(opts.routineLimits ? { routineLimits: opts.routineLimits } : {}),
     ...(opts.packdata ? { packdata: opts.packdata } : {}),
     ...(opts.migrated ? { migrated: true } : {}),

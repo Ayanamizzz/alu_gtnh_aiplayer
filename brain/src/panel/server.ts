@@ -25,6 +25,7 @@ import type { ProviderConfig, RemoteModelsResult, TestConnectionResult } from '.
 import { StructureBook } from '../packdata/index.ts'
 import type { GuideBook, TextureAtlas, TooltipTable } from '../packdata/index.ts'
 import { PlannerStoreError } from '../planner/store.ts'
+import { pictureMediaType } from '../store/pictures.ts'
 import type { PlannerWorkspace, PlannerReadSection } from '../planner/workspace.ts'
 import { BlockLooks, GridError, gridFromBlocks, gridFromDraft, renderView, sceneOf } from '../render/index.ts'
 import type { BlockKind, Scene, VoxelGrid } from '../render/index.ts'
@@ -1387,10 +1388,10 @@ export class PanelServer {
 
   /** 它看过的一张图（对话日志里的）。 */
   private pictureFile(res: http.ServerResponse, url: URL): void {
-    const png = this.deps.pictures?.get(url.searchParams.get('id') ?? '')
-    if (!png) throw new HttpError(404, 'not_found', '这张图已经清理掉了')
-    res.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': png.length, 'Cache-Control': 'private, max-age=3600' })
-    res.end(png)
+    const bytes = this.deps.pictures?.get(url.searchParams.get('id') ?? '')
+    if (!bytes) throw new HttpError(404, 'not_found', '这张图已经清理掉了')
+    res.writeHead(200, { 'Content-Type': pictureMediaType(bytes), 'Content-Length': bytes.length, 'Cache-Control': 'private, max-age=3600' })
+    res.end(bytes)
   }
 
   private draftName(raw: unknown): string {
