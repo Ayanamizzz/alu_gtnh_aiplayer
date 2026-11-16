@@ -2,7 +2,8 @@
 import { buildMesh, expandRuns, FLOATS_PER_VERTEX as F, firstPersonMatrix, VERTEX_SHADER, FRAGMENT_SHADER } from '/viewer3d.js'
 
 const canvas = document.querySelector('canvas')
-const gl = canvas.getContext('webgl', { antialias: false, preserveDrawingBuffer: true })
+// Opaque framebuffer: PNG and JPEG share the same composite, including glass.
+const gl = canvas.getContext('webgl', { alpha: false, antialias: false, preserveDrawingBuffer: true })
 if (!gl) throw new Error('WebGL unavailable')
 const compile = (type, source) => {
   const shader = gl.createShader(type)
@@ -58,7 +59,7 @@ export function render({ scene, camera, width = 512, height = 288, fov = 70 }) {
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
   gl.enable(gl.DEPTH_TEST)
   gl.disable(gl.CULL_FACE) // Eyes may be inside leaves; both sides of cutout faces remain visible.
-  gl.uniformMatrix4fv(matrixAt, false, firstPersonMatrix(eye, look, width / height, fov))
+  gl.uniformMatrix4fv(matrixAt, false, firstPersonMatrix(eye, look, width / height, fov, camera.yaw))
   function draw(data, glass) {
     const buffer = gl.createBuffer()
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer)

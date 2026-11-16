@@ -193,12 +193,20 @@ export function cameraMatrix(camera, aspect) {
 }
 
 /** First-person view: coordinates relative to scene.origin, real server look vector, vertical FOV in degrees. */
-export function firstPersonMatrix(eye, look, aspect, fov = 70) {
+export function firstPersonMatrix(eye, look, aspect, fov = 70, yaw) {
   const near = 0.05, far = 128
   const f = 1 / Math.tan(fov * Math.PI / 360)
   const projection = new Float32Array([f / aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) / (near - far), -1, 0, 0, 2 * far * near / (near - far), 0])
   const z = normalize(look.map((v) => -v))
-  const x = normalize(cross(Math.abs(z[1]) > 0.999 ? [0, 0, 1] : [0, 1, 0], z))
+  // Minecraft yaw fixes screen-right even at a vertical look. Switching an arbitrary
+  // world-up vector near the poles causes a sudden 180° roll. Old callers without yaw
+  // keep their horizontal bearing (and use yaw 0 only when looking exactly vertically).
+  const heading = yaw === undefined ? Math.atan2(-look[0], look[2]) : yaw * Math.PI / 180
+  const right = [-Math.cos(heading), 0, -Math.sin(heading)]
+  const along = dot(right, z)
+  let perpendicular = right.map((v, i) => v - along * z[i])
+  if (Math.hypot(...perpendicular) < 1e-9) perpendicular = cross([0, 1, 0], z)
+  const x = normalize(perpendicular)
   const y = cross(z, x)
   const view = new Float32Array([x[0], y[0], z[0], 0, x[1], y[1], z[1], 0, x[2], y[2], z[2], 0, -dot(x, eye), -dot(y, eye), -dot(z, eye), 1])
   return multiply(projection, view)
