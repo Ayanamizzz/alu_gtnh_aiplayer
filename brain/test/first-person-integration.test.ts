@@ -29,13 +29,29 @@ test('view_area eyes rejects contradictory cameras and unconfigured or canceled 
   const ctx = { botName: 'Alu', bridge: new BridgeApi(game) } as ToolContext
   assert.match((await runTool(ALL_TOOLS, ctx, 'view_area', { view: 'eyes' })).content, /unavailable/)
   assert.match((await runTool(ALL_TOOLS, ctx, 'view_area', { view: 'eyes', x1: 0 })).content, /only radius/)
-  assert.match((await runTool(ALL_TOOLS, ctx, 'view_area', { view: 'eyes', radius: 25 })).content, /2–24/)
+  assert.match((await runTool(ALL_TOOLS, ctx, 'view_area', { view: 'eyes', radius: 32 })).content, /<= 31/)
   const neverRender = { render: async () => { throw new Error('must not render') } }
   const canceled = await runTool(ALL_TOOLS, { ...ctx, firstPerson: neverRender, signal: controller.signal }, 'view_area', { view: 'eyes' })
   assert.equal(canceled.isError, true)
   assert.match(canceled.content, /canceled/)
   assert.deepEqual(game.callsOf('bot.snapshot'), [])
   assert.deepEqual(game.callsOf('task.start'), [])
+})
+
+test('the configured eye-observation deadline includes waiting for the server snapshot', async (t) => {
+  const before = process.env.AIPLAYER_VIEW_TIMEOUT_MS
+  process.env.AIPLAYER_VIEW_TIMEOUT_MS = '5'
+  t.after(() => { if (before === undefined) delete process.env.AIPLAYER_VIEW_TIMEOUT_MS; else process.env.AIPLAYER_VIEW_TIMEOUT_MS = before })
+  const game = new FakeGame()
+  game.handlers['bot.snapshot'] = async () => { await new Promise(resolve => setTimeout(resolve, 30)); return structuredClone(snapshot) }
+  let rendered = false
+  const ctx = { botName: 'Alu', bridge: new BridgeApi(game), firstPerson: { render: async () => { rendered = true; throw new Error('snapshot did not arrive within the deadline') } } } as unknown as ToolContext
+  const result = await runTool(ALL_TOOLS, ctx, 'view_area', { view: 'eyes', radius: 0 })
+  assert.equal(result.isError, true)
+  assert.match(result.content, /timed out after 0\.005 seconds/)
+  assert.deepEqual(game.callsOf('bot.snapshot'), [{ bot: 'Alu', radius: 0 }])
+  assert.equal(rendered, false)
+  assert.equal(result.images, undefined)
 })
 
 test('both lines and a real helper send the rendered JPEG to their model and retain the same image for the panel', { skip: !executable, timeout: 90_000 }, async (t) => {

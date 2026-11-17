@@ -248,8 +248,11 @@ PlayerView（`world.player` 的结果，也是 `chat`、`whisper` 事件里的 `
 | `bot.chat` | `{bot, message}` | `{lines, droppedLines?, cutChars?}`：排进去了几行；队列满了没排进去的行数；超过 1000 字被截掉的字数。以该玩家身份在公共聊天说话，超过 100 字自动分行（尽量在标点或空格后面断开，不把一句话从中间切开），约每秒一行；一次最多 1000 字，排队最多 20 行，超出的丢弃。每一行开头的 `/` 和空白都会被去掉，聊天内容不会被当成指令 |
 | `bot.command` | `{bot, command}` | `{output:[string]}`。以该玩家身份执行指令（不带 `/`，连斜杠最多 100 字符，超出返回 `bad_request`）。`output` 是执行当下服务器回给它的消息；之后才到的走 `bot.message` 事件。指令必须以 mod 配置 `allowedCommands` 里某一项的全部单词开头，否则 `denied`。短时间内说话和指令加起来超过大约 8 条也返回 `denied`（再多会被服务器当刷屏踢掉），等几秒再试 |
 | `bot.look` | `{bot, x,y,z}` | `{}` |
+| `bot.snapshot` | `{bot, radius?=12}`，radius为0–31 | 只读第一人称快照，见下；不改变站位或朝向，不加载缺失区块 |
 | `bot.drop` | `{bot, items:[ItemFilter]\|all:true}` | `{dropped:n}`，丢在面前 |
 | `bot.probe` | `{bot, x,y,z}` | `world.block` 的内容，加 `{canDig, digTicks, toolSlot, inReach, needs, candidates:[{slot,item,harvest,strength,ticks,level?,classes?,excluded?}], shearing?, protection?}`：它现在能不能挖这个方块、用哪件工具、要多久，见下；`protection` 是服务器自己的保护不让它动这一格（见“任务”下面的“服务器自己的保护”），这时工具挖得动也一样 |
+
+`bot.snapshot` 在同一服务端tick线程handler里读取实际眼位/视线与方块：`{version:1,bot,dim,tick,time,capturedAt,captureDurationMs?,camera:{eye:{x,y,z},look:{x,y,z},yaw,pitch},blocks:WorldBlocks}`。`eye/look`保留原始数值，`tick`是世界总tick、`time`是世界时间、`capturedAt`是服务器毫秒时间戳。`captureDurationMs`仅计算采集handler内部耗时，不含等tick、网络及响应JSON序列化。范围以眼睛所在格为中心，宽度为`2*radius+1`，高度裁在0–255；最大radius31来自world.blocks每边64格的约束。`blocks`沿用palette/runs/unloaded，保留GT扩展metadata，未知格为`?`。不包含实体、动态TE或客户端渲染结果；大脑另外把快照渲染成图，图代表采集时刻。
 
 `bot.probe` 的 `needs` 是这个方块自己说要什么工具（Forge 的 `getHarvestTool(meta)`、`getHarvestLevel(meta)`）：`{tool?, level?, toolRequired}`。`tool` 是工具类别的名字（`pickaxe`、`axe`、`shovel`，GregTech 的 `wrench`、`cutter`……），`level` 是最低等级；方块不说类别时没有这两项，能不能挖由每件工具自己判断（原版工具按方块的材质）。`toolRequired:false` 是方块材质不要求工具，不保证掉自身或一定掉东西：掉落仍由方块和所用工具决定。读不出来时带 `unreadable:true`。
 `candidates` 是空手和身上每件不能叠放的东西各自对这一格的结果：`harvest` 是游戏判定有无采掘资格（Forge 的 `canHarvestBlock`，再要求有进度），不是掉落表，也不是“必定有物品掉落”，`strength` 是每 tick 挖掉的比例（0 是一点进度都没有：这个整合包把原版的铁镐这类工具关掉了，就是这样），`ticks` 是要多久（-1 挖不动）；`level` 是这件工具对 `needs.tool` 那一类自报的等级（`getHarvestLevel(stack, 类别)`，-1 是不算这一类；**GregTech 的工具对任何类别都报自己的等级**，挖不挖得动看 `harvest`），`classes` 是它自认是哪几类工具、各几级（GregTech 的工具不报）。

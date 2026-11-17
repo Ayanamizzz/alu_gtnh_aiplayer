@@ -24,7 +24,8 @@ public final class FirstPersonSnapshot {
     }
 
     public static JsonObject capture(EntityPlayerMP player, int radius) {
-        if (radius < 2 || radius > 24) throw RpcException.badRequest("radius must be between 2 and 24");
+        // world.blocks allows at most 64 cells per side; a centred integer radius r spans 2r+1.
+        if (radius < 0 || radius > 31) throw RpcException.badRequest("radius must be between 0 and 31 (world.blocks side limit: 64)");
         long began = System.nanoTime();
         World w = player.worldObj;
         Vec3 eye = Sight.eyes(player), look = Sight.look(player);

@@ -12,7 +12,7 @@ export function firstPersonTool(renderer: Pick<FirstPersonRenderer, 'render'>): 
     picture: true,
     rawData: true,
     description: 'Look from your current real eyes and direction. Experimental textured reconstruction, not a Minecraft client screenshot; blocks only, no entities or dynamic machine details.',
-    inputSchema: obj({ radius: int('Nearby snapshot radius in blocks (default 12).', { min: 2, max: 24 }) }),
+    inputSchema: obj({ radius: int('Nearby snapshot radius in blocks (default 12).', { min: 0, max: 31 }) }),
     async run(ctx, input: { radius?: number }) {
       const start = performance.now()
       const snapshot = await ctx.bridge.botSnapshot(ctx.botName, input.radius ?? 12)

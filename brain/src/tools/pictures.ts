@@ -163,9 +163,9 @@ export const viewArea: Tool = {
     `Inspect actual world blocks. view "eyes": low-res first-person reconstruction from your current eye/aim, not a client screenshot; no entities or exact machine shapes. Other views: block-colour schematics, corners or nearby radius, at most ${AREA_MAX_SIDE} per side.`,
   inputSchema: obj({
     ...boxProps,
-    radius: int(`Without corners: how far to look around yourself, in blocks each way (default ${AREA_DEFAULT_RADIUS}).`, { min: 2, max: AREA_MAX_RADIUS }),
+    radius: int(`Without corners: how far to look around yourself, in blocks each way (default ${AREA_DEFAULT_RADIUS}).`, { min: 0, max: AREA_MAX_RADIUS }),
     ...VIEW_PARAMS,
-    view: str('eyes: actual eye/aim, radius 2–24, no corners/from/layer. iso (default): corner schematic; top: down; side: level; layer: one horizontal layer.', { enum: ['eyes', ...VIEWS] }),
+    view: str('eyes: actual eye/aim, radius 0–31, no corners/from/layer. iso (default): corner schematic; top: down; side: level; layer: one horizontal layer.', { enum: ['eyes', ...VIEWS] }),
     layer: int('For view "layer": the y of the layer.', { min: 0, max: 255 }),
   }),
   async run(ctx, i: AreaInput): Promise<ToolResult | string> {
@@ -174,6 +174,7 @@ export const viewArea: Tool = {
       if (!result.isError && !canSee(ctx)) result.content = `${NO_VISION_NOTE}\n${result.content}`
       return result
     }
+    if (i.radius !== undefined && i.radius < 2) return fail('Schematic radius must be >= 2; view:"eyes" also supports radius 0 or 1.')
     const corners = [i.x1, i.y1, i.z1, i.x2, i.y2, i.z2]
     const given = corners.filter((v) => v !== undefined).length
     if (given !== 0 && given !== 6) return fail('Give all of x1, y1, z1, x2, y2, z2 (two opposite corners), or none of them to look around yourself.')

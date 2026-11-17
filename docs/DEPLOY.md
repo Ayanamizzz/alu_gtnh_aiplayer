@@ -83,6 +83,12 @@ tools/live log | grep 口令      # 首次启动打印的面板口令
 
 本地配方只在启动时加载。替换packdata后必须重启脑；规划器发现文件身份变了会报 `PACKDATA_RELOAD_REQUIRED`，不能只重新describe就把旧索引认证成新资料。计算模型的固定版本与本服实际机器仍是两层，结果不能代替现场验收。
 
+**第一人称看图（`view_area {view:"eyes"}`）是可选运行能力。** 身体需要包含只读 `bot.snapshot`，大脑机器需要Chrome/Chromium及本地 `packdata/textures/atlas.{json,png}`；不需要Minecraft客户端或主人开着网页。可用 `AIPLAYER_VIEW_CHROME=/path/to/chrome` 指定程序，否则探测常见安装位置。缺依赖不影响大脑启动和其他工具，只有该模式报不可用；不会自动安装软件。
+
+渲染器首次请求才启动，使用独立临时profile、匿名CDP管道和仅loopback的静态资源服务，不连接用户浏览器。后续复用，退出时统一关闭并清理；取消、超时、启动或进程异常后允许下次重建。默认整个看图请求45秒：本机实测冷启动约11–26秒，另需容纳身体查询。可在服务环境中用 `AIPLAYER_VIEW_TIMEOUT_MS` 调整（正整数毫秒；受Node计时器上限2147483647约束）。同一渲染器同时只处理一张，忙时明确返回。保留完整brain发布目录中的 `src/vision/` 与 `src/panel/public/viewer3d.js`。
+
+这里是方块级现场重建：JPEG与简图PNG一起保存在数据目录的pictures里，并按媒体类型展示。复杂机器/管线/门可能形状近似，缺材质以品红提示；不把图当作精确接线或间隙依据。原有示意图模式无需Chrome，继续可用。
+
 目录里有什么：
 
 | | |

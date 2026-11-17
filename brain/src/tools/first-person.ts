@@ -1,8 +1,7 @@
 import { BridgeError } from '../bridge/protocol.ts'
 import { fail } from './types.ts'
 import type { ToolContext, ToolResult } from './types.ts'
-
-const TOTAL_TIMEOUT_MS = 45_000
+import { viewTimeoutMs } from '../vision/renderer.ts'
 
 /** Stops waiting promptly; a dispatched read-only server query may still finish its current tick. */
 async function observe<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -22,19 +21,21 @@ async function observe<T>(operation: Promise<T>, signal: AbortSignal): Promise<T
 /** Real current-eye observation. It never moves the player or substitutes a schematic/other camera. */
 export async function firstPersonView(ctx: ToolContext, input: { radius?: number; x1?: number; y1?: number; z1?: number; x2?: number; y2?: number; z2?: number; from?: string; layer?: number }): Promise<ToolResult> {
   if ([input.x1, input.y1, input.z1, input.x2, input.y2, input.z2, input.from, input.layer].some(value => value !== undefined)) {
-    return fail('view:"eyes" captures your actual current eye and aim. Give only radius (2–24); corners, from and layer select schematic views instead. This observation does not turn or move you.')
+    return fail('view:"eyes" captures your actual current eye and aim. Give only radius (0–31); corners, from and layer select schematic views instead. This observation does not turn or move you.')
   }
   const radius = input.radius ?? 12
-  if (!Number.isInteger(radius) || radius < 2 || radius > 24) return fail('view:"eyes" radius must be 2–24 blocks (default 12).')
+  if (!Number.isInteger(radius) || radius < 0 || radius > 31) return fail('view:"eyes" radius must be 0–31 blocks (default 12; the world query allows at most 64 cells per side).')
   if (!ctx.firstPerson) return fail('First-person reconstruction is unavailable on this brain. It requires the local renderer, a Chrome/Chromium executable and the pack texture atlas; no Minecraft client is needed. Other view_area modes still work.')
+  let timeoutMs: number
+  try { timeoutMs = viewTimeoutMs() } catch (error) { return fail(String(error)) }
   const start = performance.now()
-  const timeout = AbortSignal.timeout(TOTAL_TIMEOUT_MS)
+  const timeout = AbortSignal.timeout(timeoutMs)
   const signal = ctx.signal ? AbortSignal.any([ctx.signal, timeout]) : timeout
   try {
     signal.throwIfAborted()
     const snapshot = await observe(ctx.bridge.botSnapshot(ctx.botName, radius), signal)
     const captureMs = performance.now() - start
-    const picture = await ctx.firstPerson.render(snapshot, { signal, timeoutMs: Math.max(1, Math.floor(TOTAL_TIMEOUT_MS - captureMs)) })
+    const picture = await ctx.firstPerson.render(snapshot, { signal, timeoutMs: Math.max(1, Math.floor(timeoutMs - captureMs)) })
     const { png, jpeg, ...renderInfo } = picture
     const diagnostics = picture.diagnostics
     const missingPreview = picture.substitutes.slice(0, 12).join(', ') || 'none'
@@ -54,7 +55,7 @@ export async function firstPersonView(ctx: ToolContext, input: { radius?: number
     }
   } catch (error) {
     if (ctx.signal?.aborted) return fail('First-person observation canceled. No completed picture was returned.')
-    if (timeout.aborted) return fail('First-person observation timed out after 45 seconds. No completed picture was returned; try again when the local renderer is available.')
+    if (timeout.aborted) return fail(`First-person observation timed out after ${timeoutMs / 1000} seconds. No completed picture was returned; try again when the local renderer is available.`)
     if (error instanceof BridgeError && /unknown|no such|not found/i.test(error.message)) {
       return fail(`First-person snapshot was unavailable from the body (${error.code}: ${error.message}). Check that the bot is online and the body includes bot.snapshot; no schematic was substituted.`)
     }

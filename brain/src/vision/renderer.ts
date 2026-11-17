@@ -27,6 +27,14 @@ export interface SnapshotPicture {
 export interface RendererOptions { executable?: string }
 export interface RenderOptions { signal?: AbortSignal; timeoutMs?: number }
 
+/** Measured cold startup is 11–26s; 45s leaves room for the body's 15s request timeout.
+ * Operators may change the overall observation deadline; the upper bound is Node's timer range. */
+export function viewTimeoutMs(raw: string | number | undefined = process.env.AIPLAYER_VIEW_TIMEOUT_MS): number {
+  const value = raw === undefined ? 45_000 : typeof raw === 'string' && raw.trim() === '' ? NaN : Number(raw)
+  if (!Number.isInteger(value) || value < 1 || value > 2_147_483_647) throw new Error('AIPLAYER_VIEW_TIMEOUT_MS/timeoutMs must be an integer from 1 to 2147483647 (Node timer range)')
+  return value
+}
+
 interface Resources {
   server?: Server
   profile?: string
@@ -152,8 +160,8 @@ export class FirstPersonRenderer {
     if (options.signal?.aborted) return Promise.reject(cancelled(options.signal.reason))
     if (this.closed) return Promise.reject(new Error('First-person renderer is closed'))
     if (this.active) return Promise.reject(new Error('First-person renderer is busy; try again after the current picture'))
-    const timeoutMs = options.timeoutMs ?? 45_000
-    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 120_000) return Promise.reject(new Error('Renderer timeoutMs must be in (0, 120000]'))
+    let timeoutMs: number
+    try { timeoutMs = viewTimeoutMs(options.timeoutMs) } catch (error) { return Promise.reject(error) }
     const controller = new AbortController()
     const abort = () => controller.abort(cancelled(options.signal?.reason))
     options.signal?.addEventListener('abort', abort, { once: true })
