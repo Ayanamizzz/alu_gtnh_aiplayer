@@ -7,10 +7,9 @@ import assert from 'node:assert/strict'
 import type { AgentEvent } from '../src/agent/events.ts'
 import { describe, it } from 'node:test'
 import { Presence } from '../src/agent/presence.ts'
-import { TODO_NUDGE_MAX } from '../src/agent/lines.ts'
 import { LlmError } from '../src/llm/index.ts'
 import { TODO_DONE_KEPT } from '../src/store/todo.ts'
-import { chat, lineCalls, makeAgent, reply, told } from './agent-harness.ts'
+import { chat, lineCalls, makeAgent, reply, taskEnded, told } from './agent-harness.ts'
 import type { AgentHarness, MakeAgentOptions } from './agent-harness.ts'
 import { sleep, waitFor } from './helpers.ts'
 
@@ -143,9 +142,11 @@ describe('工作清单：提示词', () => {
     const { h } = setup(t, { timing: { todoNudgeMs: 600_000 } })
     await lineCalls(h, 'talk', 'todo', {})
     await lineCalls(h, 'work', 'todo', {})
-    const common = '- 工作清单（todo）：两条线和主人共用一张，不随历史压缩丢，没做完的每一轮都列在“当前状态”里。一次交代了好几件、一轮做不完的事可以记在上面。清单上有没做的（在等人的不算）就不会自动下线；'
-    assert.ok((h.talk.requests[0]!.system ?? '').includes(`${common}干活线停下来时，还有没做的会叫醒它一次。\n`))
-    assert.ok((h.llm.requests[0]!.system ?? '').includes(`${common}你停下来时（没有任务、例程、在等的回答），还有没做的会叫醒你一次。\n`))
+    for (const req of [h.talk.requests[0]!, h.llm.requests[0]!]) {
+      assert.match(req.system, /两条线和主人共用一张/)
+      assert.match(req.system, /有待办（open）就不会自动下线/)
+      assert.match(req.system, /继续收到待办/)
+    }
   })
 })
 
@@ -199,6 +200,35 @@ describe('工作清单：自动下线', () => {
     assert.deepEqual(p.world.calls, ['despawn'])
   })
 
+  it('无人发新指令：只回答看过棉苗后仍被叫醒，挂起棉苗后接着收圆石；收货标完成才开始五分钟休息', async (t) => {
+    const { h } = setup(t)
+    const p = presenceOf(h)
+    await p.presence.onReady()
+    h.llm.enqueue(
+      reply('刚才看过棉苗，尚未成熟。'),
+      reply('', [{ name: 'todo', input: { change: [{ id: 1, waitingFor: '棉苗成熟' }] } }]), reply(''),
+      reply('', [{ name: 'withdraw_items', input: { container: { x: 10, y: 64, z: -2 }, items: [{ id: 'minecraft:cobblestone', count: 1 }] } }]), reply(''),
+    )
+    h.todo.apply({ add: [{ text: '收棉花' }, { text: '从箱子收 1 个圆石' }] }, 'owner', T0)
+    await waitFor('the remaining stone task started without a new command', () => h.game.callsOf('task.start').length > 0)
+    await h.agent.whenIdle()
+    assert.deepEqual(h.todo.list().map(i => i.state), ['waiting', 'open'])
+    assert.equal(nudges(h).length, 3)
+    assert.doesNotMatch(nudges(h)[2]!, /#1 /)
+    assert.match(nudges(h)[2]!, /#2 从箱子收 1 个圆石/)
+    await p.after(6)
+    assert.equal(p.world.away, false)
+    h.llm.enqueue(reply('', [{ name: 'todo', input: { change: [{ id: 2, state: 'done' }] } }]), reply(''))
+    h.agent.handleEvent(taskEnded('t1', 'done', { type: 'withdraw', result: { moved: 1 } }))
+    await h.agent.whenIdle()
+    assert.deepEqual(h.todo.list().map(i => i.state), ['waiting', 'done'])
+    await p.after(0)
+    await p.after(4)
+    assert.deepEqual(p.world.calls, [])
+    await p.after(1)
+    assert.deepEqual(p.world.calls, ['despawn'])
+  })
+
   it('下线前再看一遍：就在那一会儿清单上多了一件没做的，不下线', async (t) => {
     const { h } = setup(t, { timing: { todoNudgeMs: 600_000 } })
     const p = presenceOf(h)
@@ -212,43 +242,59 @@ describe('工作清单：自动下线', () => {
 })
 
 describe('工作清单：干活线停下来以后被叫醒', () => {
-  const NUDGE_2 = '[系统] 你停下来了（身体上没有在跑或排着的任务、没有例程、也没有在等的回答），工作清单上还有 2 件没做完、也没标成在等人：#1 把东边箱子里的钢锭搬进仓库、#2 挖完北边的矿洞'
-
-  it('它记下两件就停了：过一小会儿叫醒它一次，列出没做的；它什么都没改又停了，不再叫。主人勾掉一件不叫（收拾清单不该把它叫起来）；多了一件没做的、或者它为别的事走了一轮，再叫', async (t) => {
+  it('只剩等待项不催；重新打开同一条以后，即使编号没变也继续做', async (t) => {
     const { h } = setup(t)
-    h.llm.enqueue(reply('', [{ name: 'todo', input: { add: [{ text: '把东边箱子里的钢锭搬进仓库' }, { text: '挖完北边的矿洞' }] } }]), reply('先记在清单上了'))
-    h.agent.handleEvent(told('先把这两件记下'))
-    await waitFor('the worker was woken by the list', () => h.llm.requests.length >= 3)
-    assert.deepEqual(nudges(h), [NUDGE_2])
-    // 被叫醒的这一轮它什么都没做（假模型回空）：之后不再叫
-    await sleep(200)
+    h.llm.enqueue(reply('', [{ name: 'todo', input: { change: [{ id: 1, waitingFor: '高炉钥匙' }] } }]), reply(''))
+    h.todo.apply({ add: [{ text: '修高炉' }] }, 'owner', T0)
+    await waitFor('item marked waiting', () => h.todo.list()[0]?.state === 'waiting')
     await h.agent.whenIdle()
-    assert.equal(h.llm.requests.length, 3)
-    // 主人在面板上把 #1 勾掉、给 #2 加个备注：清单上没多出没做的，不叫
-    h.todo.apply({ change: [{ id: 1, state: 'done' }, { id: 2, note: '不急' }] }, 'owner', T0)
-    await sleep(200)
-    assert.equal(h.llm.requests.length, 3)
-    // 叫醒时就在的 #2 被标成在等人、后来又重新打开：算新多出来的，再叫
-    h.todo.apply({ change: [{ id: 2, waitingFor: 'Steve 让路' }] }, 'owner', T0)
-    await sleep(200)
-    assert.equal(h.llm.requests.length, 3)
-    h.todo.apply({ change: [{ id: 2, state: 'open' }] }, 'owner', T0)
-    await waitFor('woken again after #2 was reopened', () => h.llm.requests.length >= 4)
-    assert.equal(nudges(h)[1], '[系统] 你停下来了（身体上没有在跑或排着的任务、没有例程、也没有在等的回答），工作清单上还有 1 件没做完、也没标成在等人：#2 挖完北边的矿洞')
-    await sleep(200)
-    assert.equal(h.llm.requests.length, 4)
-    // 主人加了一件没做的：再叫，列出现在还没做的
-    h.todo.apply({ add: [{ text: '修二号高炉' }] }, 'owner', T0)
-    await waitFor('woken again after a new item', () => h.llm.requests.length >= 5)
-    assert.equal(nudges(h)[2], '[系统] 你停下来了（身体上没有在跑或排着的任务、没有例程、也没有在等的回答），工作清单上还有 2 件没做完、也没标成在等人：#2 挖完北边的矿洞、#3 修二号高炉')
-    await sleep(200)
-    assert.equal(h.llm.requests.length, 5)
-    // 清单没变，可它为别的事（对话线交来的）走了一轮：走完再叫
-    h.agent.handleEvent(told('仓库门口的火把补一下'))
-    await waitFor('woken again after another turn', () => h.llm.requests.length >= 7)
-    assert.equal(nudges(h).length, 4)
-    await sleep(200)
-    assert.equal(h.llm.requests.length, 7)
+    await sleep(100)
+    assert.equal(nudges(h).length, 1)
+    h.todo.apply({ change: [{ id: 1, state: 'open' }] }, 'owner', T0)
+    await waitFor('same id wakes work again', () => nudges(h).length >= 2)
+    assert.match(nudges(h)[1]!, /#1 修高炉/)
+  })
+
+  it('清单提醒已经排队，又把唯一一项挂起：不为旧提醒调模型，同批真人交事仍然处理', async (t) => {
+    const { h } = setup(t, { timing: { debounceMs: 100, todoNudgeMs: 5 } })
+    h.todo.apply({ add: [{ text: '找钥匙开门' }] }, 'owner', T0)
+    const queued = () => h.persisted.state?.queue.some(ev => ev.type === 'todo')
+    await waitFor('nudge queued before model dispatch', queued)
+    h.todo.apply({ change: [{ id: 1, waitingFor: '钥匙' }] }, 'owner', T0)
+    await h.agent.whenIdle()
+    assert.equal(h.llm.requests.length, 0)
+    h.todo.apply({ change: [{ id: 1, state: 'open' }] }, 'owner', T0)
+    await waitFor('reopened item queued', queued)
+    h.agent.handleEvent(told('看看基地大门'))
+    h.todo.apply({ change: [{ id: 1, waitingFor: '钥匙' }] }, 'owner', T0)
+    await h.agent.whenIdle()
+    assert.equal(h.llm.requests.length, 1)
+    assert.match(h.llm.lastUserText(0), /看看基地大门/)
+    assert.deepEqual(nudges(h), [])
+  })
+
+  it('今日额度用尽不催模型；额度恢复，无人说话也会继续已有待办', async (t) => {
+    const { h } = setup(t, { settings: { dailyTokenLimit: 100 }, timing: { retryDelaysMs: [50] } })
+    h.usedTokens.value = 100
+    h.todo.apply({ add: [{ text: '清点仓库' }] }, 'owner', T0)
+    await sleep(120)
+    assert.equal(h.llm.requests.length, 0)
+    h.usedTokens.value = 0
+    await waitFor('todo resumed when quota became available', () => nudges(h).length > 0)
+  })
+
+  it('身体查询偶尔失败、或上面有未跟踪的任务：不抢身体，恢复空闲后不用新事件', async (t) => {
+    const { h } = setup(t)
+    let checks = 0
+    h.game.handlers['task.list'] = () => {
+      if (++checks === 1) throw new Error('一次查询没收到答复')
+      return { active: { id: 'other', type: 'goto', state: 'running' }, queue: [], recent: [] }
+    }
+    h.todo.apply({ add: [{ text: '清点仓库' }] }, 'owner', T0)
+    await waitFor('body checked again after a transient error', () => checks >= 2)
+    assert.equal(h.llm.requests.length, 0)
+    h.game.handlers['task.list'] = () => ({ active: null, queue: [], recent: [] })
+    await waitFor('free body available for open work', () => nudges(h).length > 0)
   })
 
   it('对话线正在想的时候清单变了：先不叫，等它想完（它可能正要把事交过来）', async (t) => {
@@ -326,21 +372,20 @@ describe('工作清单：干活线停下来以后被叫醒', () => {
     await waitFor('woken by the list after coming online', () => nudges(h).length === 1)
   })
 
-  it('每次被叫醒它都只往清单上再加一件、不开任务也不提问：中间没有外面的事，连着叫到上限就不再叫，日志里记一条', async (t) => {
-    const { h } = setup(t)
-    let n = 0
-    h.llm.auto = (seen) => (seen.includes('[系统] 你停下来了') ? reply('', [{ name: 'todo', input: { add: [{ text: `再看一次（第 ${++n} 次）` }] } }]) : undefined)
+  it('只往清单加事不处理，提醒变慢、有日志，超过原来八次仍可自己继续', async (t) => {
+    const { h } = setup(t, { timing: { todoNudgeMs: 5, retryDelaysMs: [25, 55] } })
+    const times: number[] = []
+    h.llm.auto = (seen) => {
+      if (!seen.includes('[系统] 你停下来了')) return
+      times.push(performance.now())
+      h.agent.handleEvent(chat('Steve', '今天天气真好')) // 无关的公屏闲聊不会把退避打回第一档
+      return reply('', [{ name: 'todo', input: times.length < 9 ? { add: [{ text: '再检查仓库' }] } : { change: h.todo.list().map(i => ({ id: i.id, waitingFor: '仓库钥匙' })) } }])
+    }
     h.todo.apply({ add: [{ text: '修二号高炉' }] }, 'owner', T0)
-    await waitFor('the cap was reached', () => h.log.recent(0, 500).some((e) => e.kind === 'error' && e.text.includes('工作清单')))
-    await sleep(200)
-    assert.equal(nudges(h).length, TODO_NUDGE_MAX)
-    assert.equal(n, TODO_NUDGE_MAX)
-    // 外面有了事（有人说话）：从头数，清单再变就又叫
-    h.llm.auto = undefined
-    h.agent.handleEvent(chat('Steve', 'Alu 高炉修好了吗'))
-    await h.agent.whenIdle()
-    h.todo.apply({ add: [{ text: '挖矿洞' }] }, 'owner', T0)
-    await waitFor('woken again after something happened outside', () => nudges(h).length === TODO_NUDGE_MAX + 1)
+    await waitFor('the worker can handle its list after nine nudges', () => h.todo.list().every(i => i.state === 'waiting'))
+    assert.equal(times.length, 9)
+    assert.ok(times[8]! - times[7]! >= 50, 'at the slower retry interval, not the initial 5 ms')
+    assert.equal(h.log.recent(0, 500).filter(e => e.kind === 'info' && e.text.includes('放慢')).length, 1)
   })
 
   it('不叫醒的时候：只剩在等人的；身体上还有任务在跑；它提了问在等回答；被叫停了（等有新的事交给它为止）', async (t) => {

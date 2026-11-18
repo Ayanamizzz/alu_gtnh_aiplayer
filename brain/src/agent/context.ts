@@ -17,6 +17,8 @@ export interface Snapshot {
   text: string
   /** bot 是否在线；bridge 不通时为 undefined。 */
   online: boolean | undefined
+  /** 这次现场快照确认身体在线、没有运行或排队的任务。 */
+  bodyIdle: boolean
 }
 
 export interface PendingReminder {
@@ -44,11 +46,13 @@ export async function buildSnapshot(
 ): Promise<Snapshot> {
   const lines: string[] = []
   let online: boolean | undefined
+  let bodyIdle = false
   const [status, info] = await Promise.allSettled([bridge.botStatus(botName), bridge.serverInfo()])
 
   if (status.status === 'fulfilled') {
     const st: BotStatus = status.value
     online = st.online === true
+    bodyIdle = online && !st.task && !st.queue?.length
     lines.push(formatStatus({ ...st, name: st.name ?? botName }, { itemLimit: 15 }))
   } else {
     const e: unknown = status.reason
@@ -75,7 +79,7 @@ export async function buildSnapshot(
   const list = todoStateText(todo, now)
   if (list.length > 0) lines.push(list)
   lines.push(`Real time: ${realTime(now)}`)
-  return { text: lines.join('\n'), online }
+  return { text: lines.join('\n'), online, bodyIdle }
 }
 
 /** 背景事件太多时只留最近的这么多条。 */

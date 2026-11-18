@@ -154,6 +154,8 @@ export interface LineLinks {
   outside?(): void
   /** 干活线的一轮走完了（没被叫停、没因为模型用不了退回去）：triggers 是叫醒这一轮的事。看工作清单要不要叫醒它用。 */
   ended?(turn: { id: number; triggers: readonly AgentEvent[] }): void
+  /** 防抖/接口退避结束时，仅仍有效的清单提醒才值得调模型。 */
+  todoCurrent?(ev: Extract<AgentEvent, { type: 'todo' }>): boolean
   /** 对话线派子思维（start_helper、helper_status）：事情由 agent/helpers.ts 办，这里只是转交给工具。 */
   helpers?: HelperAccess
 }
@@ -614,10 +616,12 @@ export class Agent {
     if (saved) {
       this.tracked = new Set(saved.tracked)
       this.endedSeen = saved.endedSeen.slice(-ENDED_SEEN_MAX)
-      if (saved.queue.length > 0) {
+      // 清单提醒由 Lines 按这次启动时的清单和身体重新生成，不回放过期条目。
+      const queue = saved.queue.filter((ev) => ev.type !== 'todo')
+      if (queue.length > 0) {
         this.pending = [
           { type: 'notice', time: this.now(), wake: true, text: RESTART_NOTE },
-          ...saved.queue,
+          ...queue,
         ]
       }
     }
@@ -1141,12 +1145,21 @@ export class Agent {
     this.adoptBackground()
     this.abort = new AbortController()
     const signal = this.abort.signal
-    const turnId = this.deps.history.newTurnId()
-    this.turnsStarted++
     // 提醒到点叫醒的是对话线，干活线的状态里不列
     // 状态里只列这条线自己定的提醒（到点叫醒的是定它的那条线）
     const snapshot = await buildSnapshot(this.deps.bridge, settings.botName, this.deps.reminders.list().filter((r) => (r.line ?? 'talk') === this.line), startedAt, this.deps.todo?.list() ?? [])
     if (snapshot.online !== undefined) this.shared.online = snapshot.online
+    // 提醒不是主人指令：入队到实际调用之间可能已挂起、下线或有新工作。仅丢弃过时提醒，同批其他事件照常处理。
+    for (let i = triggers.length - 1; i >= 0; i--) {
+      const ev = triggers[i]!
+      if (ev.type === 'todo' && (!snapshot.bodyIdle || this.tracked.size > 0 || this.routine?.isRunning() || !links?.todoCurrent?.(ev))) triggers.splice(i, 1)
+    }
+    if (triggers.length === 0) {
+      giveBack()
+      return
+    }
+    const turnId = this.deps.history.newTurnId()
+    this.turnsStarted++
     // 哪几本手册的原文现在还在历史里：压缩截掉了的、主人改过了的都不算，模型要用时会重新读
     const manuals = this.deps.manuals.list()
     const manualLine = manualStatusLine(manuals, manualsInContext(this.priorMessages(), manuals), this.line)
@@ -1475,7 +1488,9 @@ export class Agent {
         ? `收尾的那一步（不能再调工具）它写的话：${finalText}`
         : `收尾的那一步它没写字${lastText ? `；它这一轮最后写的是：${lastText}` : '，这一轮也没留下别的字。'}`
     const waiting = this.stillGoing()
-    const now = waiting !== undefined ? `它还在干（${waiting}），这些结束时它自己会被叫醒接着做。` : '它停下来了（身体上没有它开的任务，也没有例程在跑）；要它接着做，带话给它（tell_worker）。'
+    const now = waiting !== undefined ? `它还在干（${waiting}），这些结束时它自己会被叫醒接着做。`
+      : this.deps.todo?.list().some((i) => i.state === 'open') ? '它停下来了，工作清单里还有待办，会自动叫醒它继续处理。'
+      : '它停下来了（身体上没有它开的任务，也没有例程在跑）；要它接着做，带话给它（tell_worker）。'
     return `干活线这一轮到了每轮 ${max} 步的上限，被截断了。${said}\n${now}`
   }
 
