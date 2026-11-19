@@ -22,12 +22,10 @@ import alu.aiplayer.bot.Motion;
 /**
  * One visit to a container the bot is standing next to: open it, move stacks in or out one at a time, close it.
  * <p>
- * The normal way is the container's own screen, driven with the same shift-clicks a player uses, so the block's
- * rules about what goes where apply. Drawers have no screen and are worked the way a player works them: punched
- * to take, right-clicked with the item in hand to fill. Other storage without a screen (barrels) is filled and
- * emptied through its item-handling interface, the way a hopper would. So are GregTech's processing machines once
- * their screen has opened for the bot: what goes in lands in the input slots and what is taken comes from the
- * output slots, as it would by hand, since their screens are not built from the slots this code can click.
+ * The normal way is the container's own screen, driven with the same clicks a player uses. On a GregTech
+ * processing machine, ingredients are placed directly into its recipe input slots, not its utility slots.
+ * Drawers have no screen and are punched to take, right-clicked with the item in hand to fill. Other storage
+ * without a screen (barrels) is filled and emptied through its item-handling interface, the way a hopper would.
  * An Applied Energistics terminal is used through its screen too, but what its network stores is a list, not slots:
  * entries of the list are clicked as {@link MeNetworks} says.
  */
@@ -81,6 +79,9 @@ public final class ContainerSession {
     /** For a processing machine, its input and output slots as {first, count}. */
     private int[] machineIn, machineOut;
     private boolean fromInputs;
+    private boolean returningIngredients;
+    /** An alternate screen chosen by the caller, as opposed to a face chosen just to reach the machine. */
+    private boolean explicitFace;
     private int wait;
     private int cursor;
     private boolean viaScreen;
@@ -181,6 +182,7 @@ public final class ContainerSession {
     public ContainerSession via(int side, boolean sneak) {
         openSide = side;
         openSneak = sneak;
+        explicitFace = side >= 0 || sneak;
         return this;
     }
 
@@ -192,6 +194,12 @@ public final class ContainerSession {
     public ContainerSession fromInputSlots() {
         fromInputs = true;
         return this;
+    }
+
+    /** A process refund may recover only from the recipe inputs counted before loading, not utility slots. */
+    public ContainerSession returnIngredients() {
+        returningIngredients = true;
+        return fromInputSlots();
     }
 
     public boolean usedScreen() {
@@ -282,8 +290,8 @@ public final class ContainerSession {
                         // where things may go and what may be taken, so nothing has to be known about the block.
                         viaScreen = true;
                         phase = 2;
-                    } else if (requireProcessingSlots) {
-                        return fail("invalid", "the controller did not expose clickable input/output slots; nothing was put in");
+                    } else if (requireProcessingSlots || needsRecipeInputs(te)) {
+                        return fail("invalid", "the machine did not expose clickable input/output slots; nothing was moved");
                     } else if (viaFace()) {
                         bot.conn()
                             .closeWindow();
@@ -305,6 +313,7 @@ public final class ContainerSession {
                     if (requireProcessingSlots) return fail("invalid", "the controller opened no input/output screen; nothing was put in");
                     // No screen opened although nothing refused the click: storage without one (barrels, drawers).
                     TileEntity te = w.getTileEntity(x, y, z);
+                    if (needsRecipeInputs(te)) return fail("invalid", "the machine opened no input screen; nothing was moved");
                     if (MeNetworks.isTerminalHost(te)) {
                         // The plain terminal opens for anyone; the crafting and pattern terminals only for players
                         // the network's security lets craft.
@@ -777,6 +786,26 @@ public final class ContainerSession {
 
     // ---- through the container's screen -----------------------------------------------------------------------
 
+    private boolean needsRecipeInputs(TileEntity te) {
+        return (deposit != null || returningIngredients) && Machines.isProcessor(te);
+    }
+
+    /** Null for an ordinary transfer. An empty list on a recipe screen means no eligible input, not free choice. */
+    private List<Slot> recipeInputs(EntityPlayerMP p, List<Slot> theirs) {
+        if (opener != null) return null;
+        TileEntity te = p.worldObj.getTileEntity(x, y, z);
+        if (!needsRecipeInputs(te)) return null;
+        List<Slot> inputs = new ArrayList<>();
+        boolean machineScreen = false;
+        for (Slot slot : theirs) {
+            if (!Machines.ownSlot(te, slot)) continue;
+            machineScreen = true;
+            if ("input".equals(Machines.slotRole(te, slot.getSlotIndex()))) inputs.add(slot);
+        }
+        // A cover opened on an explicit face owns its slots. Its indices do not describe the host's inventory.
+        return explicitFace && !machineScreen ? null : inputs;
+    }
+
     /** Does one transfer. Returns false when there is nothing left to do. */
     private boolean screenStep(EntityPlayerMP p) {
         Container c = p.openContainer;
@@ -795,6 +824,7 @@ public final class ContainerSession {
             theirs.add(s);
             if (opener == null && isOutput(s)) hasProductSlots = true;
         }
+        List<Slot> inputs = recipeInputs(p, theirs);
         if (!hasProductSlots && opener == null && withdraw != null && !fromInputs) {
             List<Integer> unknown = new ArrayList<>();
             for (Slot s : theirs) if (s.getStack() == null && !acceptsExample(s, c)) unknown.add(s.slotNumber);
@@ -827,16 +857,16 @@ public final class ContainerSession {
                 // Counted across the whole inventory: some screens answer a shift-click by shuffling the stack
                 // to another of the bot's own slots, which is not a deposit.
                 int before = Inventories.count(p, exact(type));
-                if (offered < stack.stackSize) {
-                    // Pick up, place only the requested items, return the rest to the original slot. This uses
-                    // the cursor, not a spare inventory slot, and never relaxes a count into a whole-stack shift.
+                if (inputs != null || offered < stack.stackSize) {
+                    // Even a whole-stack shift lets the screen choose the destination. When the task targets
+                    // recipe inputs, click those slots instead, returning anything they did not take.
                     if (p.inventory.getItemStack() != null) {
                         failCode = "invalid";
                         failMessage = "the cursor already holds an item; clear it before transferring";
                         return false;
                     }
                     c.slotClick(s.slotNumber, 0, 0, p);
-                    placeCount(p, c, theirs, offered);
+                    placeCount(p, c, inputs != null ? inputs : theirs, offered);
                     if (p.inventory.getItemStack() != null) c.slotClick(s.slotNumber, 0, 0, p);
                 } else c.slotClick(s.slotNumber, 0, 1, p);
                 c.detectAndSendChanges();
@@ -855,11 +885,13 @@ public final class ContainerSession {
             containerFull = rejected > 0;
         }
         if (withdraw != null && !inventoryFull) {
-            for (; cursor < theirs.size(); cursor++) {
-                Slot s = theirs.get(cursor);
+            boolean recipeRefund = returningIngredients && inputs != null;
+            List<Slot> sources = recipeRefund ? inputs : theirs;
+            for (; cursor < sources.size(); cursor++) {
+                Slot s = sources.get(cursor);
                 ItemStack stack = s.getStack();
                 if (stack == null || !s.canTakeStack(p)) continue;
-                if (hasProductSlots && isOutput(s) == fromInputs) continue;
+                if (!recipeRefund && hasProductSlots && isOutput(s) == fromInputs) continue;
                 int f = matchingFilter(stack);
                 if (f < 0) continue;
                 ItemStack type = stack.copy();

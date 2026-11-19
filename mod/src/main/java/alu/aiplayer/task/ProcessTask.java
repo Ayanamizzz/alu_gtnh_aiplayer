@@ -149,7 +149,6 @@ public final class ProcessTask extends Task {
             if (multi) for (TileEntity port : Machines.ports(te, "output bus")) unloadAt.add(new int[] { port.xCoord, port.yCoord, port.zCoord });
             if (unloadAt.isEmpty()) unloadAt.add(at);
             trip = new ContainerTrip(bot, at[0], at[1], at[2]);
-            trip.session.deposit(plan(inputs)); // approach and open normally; no item or circuit changes
             trip.beforeSession(() -> {
                 busyBefore = Machines.working(machine());
                 existingOutputs = outputContents();
@@ -1066,7 +1065,7 @@ public final class ProcessTask extends Task {
         returnWanted = own;
         trip = new ContainerTrip(bot, loadAt[0], loadAt[1], loadAt[2]);
         trip.session.withdraw(own)
-            .fromInputSlots();
+            .returnIngredients();
     }
 
     /** What did not go in, each {id, meta, name, count, carried}; empty when everything did. */
