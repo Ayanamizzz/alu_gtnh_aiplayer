@@ -6,6 +6,7 @@ import java.util.List;
 import net.minecraft.block.Block;
 import net.minecraft.block.material.Material;
 import net.minecraft.entity.player.EntityPlayerMP;
+import net.minecraft.init.Blocks;
 import net.minecraft.util.AxisAlignedBB;
 import net.minecraft.util.MathHelper;
 import net.minecraft.world.World;
@@ -28,11 +29,26 @@ public final class DigFooting {
         AxisAlignedBB probe = AxisAlignedBB.getBoundingBox(body.minX, (falling ? y : feet) - EPS, body.minZ,
             body.maxX, feet + EPS, body.maxZ);
         List<AxisAlignedBB> boxes = new ArrayList<>();
-        double top = highestTop(p, x, y, z, probe, boxes);
+        int released = releasedThrough(p.worldObj, x, y, z, feet);
+        double top = Double.NEGATIVE_INFINITY;
+        for (int cy = y; cy <= released; cy++) top = Math.max(top, highestTop(p, x, cy, z, probe, boxes));
         if (top == Double.NEGATIVE_INFINITY) return false;
         // Another surface above the target already catches the fall, even if that fall started further up.
         probe.minY = Math.min(feet - maxDrop, top) - EPS;
-        return !hasLanding(p, x, y, z, probe, boxes);
+        return !hasLanding(p, x, y, released, z, probe, boxes);
+    }
+
+    /** Sand, gravel and anvils schedule a fall when the block immediately below them disappears. Each
+     * vacates its original cell and releases the next; don't count their future landing as a solid floor. */
+    private static int releasedThrough(World w, int x, int y, int z, double feet) {
+        int last = y;
+        while (last + 1 <= feet && w.blockExists(x, last + 1, z)) {
+            Block b = w.getBlock(x, last + 1, z);
+            // Modded BlockFalling subclasses can override neighbor updates; use vanilla's known behavior.
+            if (b != Blocks.sand && b != Blocks.gravel && b != Blocks.anvil) break;
+            last++;
+        }
+        return last;
     }
 
     /** A player can be balancing outside the target's column, with no floor at their own cell's centre. */
@@ -41,16 +57,17 @@ public final class DigFooting {
         double half = p.width / 2.0, feet = p.boundingBox.minY;
         AxisAlignedBB probe = AxisAlignedBB.getBoundingBox(px - half, feet - maxDrop - EPS, pz - half,
             px + half, feet + EPS, pz + half);
-        return hasLanding(p, bx, by, bz, probe, new ArrayList<>());
+        return hasLanding(p, bx, by, releasedThrough(p.worldObj, bx, by, bz, feet), bz, probe, new ArrayList<>());
     }
 
-    private static boolean hasLanding(EntityPlayerMP p, int x, int y, int z, AxisAlignedBB probe, List<AxisAlignedBB> boxes) {
+    private static boolean hasLanding(EntityPlayerMP p, int x, int fromY, int throughY, int z, AxisAlignedBB probe,
+        List<AxisAlignedBB> boxes) {
         World w = p.worldObj;
         int bottom = Math.max(0, MathHelper.floor_double(probe.minY) - 1); // fences extend above their cell
         for (int cy = MathHelper.floor_double(probe.maxY); cy >= bottom; cy--) {
             for (int cx = MathHelper.floor_double(probe.minX); cx < probe.maxX; cx++) {
                 for (int cz = MathHelper.floor_double(probe.minZ); cz < probe.maxZ; cz++) {
-                    if (cx == x && cy == y && cz == z || !w.blockExists(cx, cy, cz)) continue;
+                    if ((cx == x && cz == z && cy >= fromY && cy <= throughY) || !w.blockExists(cx, cy, cz)) continue;
                     // A liquid landing within range counts too, as it does on walking routes. Not a lava landing.
                     Material m = w.getBlock(cx, cy, cz).getMaterial();
                     if (m.isLiquid() && m != Material.lava && cy + 1 > probe.minY && cy < probe.maxY) return true;

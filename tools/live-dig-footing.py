@@ -213,6 +213,57 @@ def main():
             name = 'replace_with_side' if side else 'replace_without_side'
             report[name] = dict(before=before, task=task, after=after, capAfter=cap_after, ok=ok)
             print(name, task['result'], after, cap_after, 'ok=', ok, flush=True)
+
+        # Removing the dirt pedestal releases only the consecutive gravity blocks in its column.
+        # Ordinary stone above gravel stays in place; a player one column over doesn't lose their floor.
+        gravel, sand = 'minecraft:gravel', 'minecraft:sand'
+        for name, stack, ledge, shallow, limit, keep in [
+            ('gravel_floor',     [gravel],       '',       False, 3, True),
+            ('loose_stack',      [sand, gravel], '',       False, 3, True),
+            ('anvil_floor',      ['minecraft:anvil'], '',  False, 3, True),
+            ('gravel_walk_off',  [gravel],       'walk',   False, 3, False),
+            ('gravel_beside',    [gravel],       'beside', False, 0, False),
+            ('stone_over_loose', [gravel, STONE], '',      False, 0, False),
+            ('shallow_gravel',   [gravel],       '',       True,  2, False),
+        ]:
+            # Clear fallen blocks starting at the top, without disturbing the permanent stone floor.
+            for y in range(Y+2, Y-8, -1):
+                put(X, y, AIR)
+            put(X+1, Y, AIR)
+            put(X+1, Y+1, STONE if ledge else AIR)
+            if shallow:
+                put(X, Y-1, STONE)
+            put(X, Y, DIRT)
+            for offset, material in enumerate(stack, 1):
+                put(X, Y+offset, material)
+            initial_y = Y + len(stack) + 1
+            before = teleport(X + (1.5 if ledge == 'beside' else .5), initial_y)
+            def shaft():
+                return [block(X, y) for y in range(Y-8, Y+len(stack)+1)]
+            column = shaft()
+            assert column == [STONE] + [AIR] * 6 + [STONE if shallow else AIR, DIRT] + stack, column
+            call('task.start', task={'type': 'dig', 'blocks': [TARGET], 'dig': False, 'climb': False, 'maxDrop': limit})
+            task = bridge.wait_task(BOT, 45)
+            time.sleep(1.2)  # let native neighbor updates, falling blocks and the player's landing finish
+            after, actual = body(), shaft()
+            r = task['result']
+            ok = (task['state'] == 'done' and after['onGround'] and r['removed'] == int(not keep)
+                  and initial_y - limit <= after['pos']['y'] <= initial_y)
+            if keep:
+                ok &= (after['pos'] == before['pos'] and actual == column
+                       and any('maxDrop=' + str(limit) in s['reason'] and all(s.get(k) == v for k, v in TARGET.items())
+                               for s in r.get('skippedExamples', [])))
+            elif shallow:
+                ok &= actual[-2:] == [gravel, AIR] and after['pos']['y'] < initial_y
+            else:
+                ok &= actual[8] == AIR and actual[1] == gravel and after['pos']['y'] == initial_y
+                if ledge:
+                    ok &= int(after['pos']['x']) == X+1
+                else:
+                    ok &= actual[-1] == STONE  # even though the gravel below it fell
+            report[name] = dict(before=before, columnFromY=Y-8, column=column, ledge=ledge, task=task,
+                                after=after, columnAfter=actual, ok=ok)
+            print(name, task['result'], after, actual, 'ok=', ok, flush=True)
     finally:
         call('task.cancel')
         args.out.write_text(json.dumps(report, indent=2, ensure_ascii=False) + '\n')
