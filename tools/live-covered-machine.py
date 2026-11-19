@@ -109,6 +109,16 @@ def main():
         assert task['state'] == 'done' and task['result']['moved'] == 4, task
         assert before['covers'] == after['covers'] and after['carrying'] == 4 and after['input'][0]['count'] == 8, after
 
+        # An automatically selected face is still a machine transfer, not an explicit cover inventory.
+        # Its sole recipe input is occupied: do not park a different item in SPECIAL or BATTERY.
+        rc('tp ' + BOT + ' 16.5 100 11.5')
+        rc('give ' + BOT + ' minecraft:redstone 3')
+        blocked = transfer({'type': 'deposit', 'container': AT, 'items': [{'id': 'minecraft:redstone', 'count': 2}]})
+        bag = call('bot.status')['inventory']
+        report['occupiedInput'] = {'task': blocked, 'after': state()}
+        assert blocked['result']['moved'] == 0 and state() == after, report['occupiedInput']
+        assert sum(i['count'] for i in bag if i['id'] == 'minecraft:redstone') == 3
+
         # Only the filter is exposed; walls/floor are not natural diggable terrain. Do not click through them.
         before = washer(cover_id)
         for p in (*walls, '16 99 8'):
