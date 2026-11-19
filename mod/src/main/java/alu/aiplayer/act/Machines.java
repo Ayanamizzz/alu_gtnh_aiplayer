@@ -98,6 +98,32 @@ public final class Machines {
         return coverable != null;
     }
 
+    /** Faces that can open this machine without operating a cover. -1: no cover routing needed. */
+    public static int machineAccessFaces(TileEntity te) {
+        if (!(te instanceof net.minecraft.inventory.IInventory) || !coversAvailable() || !coverable.isInstance(te)) return -1;
+        int faces = 0;
+        boolean covered = false;
+        for (int side = 0; side < 6; side++) {
+            Object dir = net.minecraftforge.common.util.ForgeDirection.getOrientation(side);
+            try {
+                if (!(Boolean) hasCover.invoke(te, dir)) {
+                    faces |= 1 << side;
+                    continue;
+                }
+                covered = true;
+                // GT calls onCoverRightClick BEFORE isGUIClickable: even asking the cover by clicking it may
+                // clear a filter. Only pass through a cover that inherits GT's no-op and permits GUI clicks.
+                Object c = coverAt.invoke(te, dir);
+                if (c != null && c.getClass().getMethod("onCoverRightClick", net.minecraft.entity.player.EntityPlayer.class,
+                    float.class, float.class, float.class).getDeclaringClass().getName().equals("gregtech.common.covers.Cover")
+                    && Boolean.TRUE.equals(c.getClass().getMethod("isGUIClickable").invoke(c))) faces |= 1 << side;
+            } catch (ReflectiveOperationException e) {
+                covered = true; // could not establish that a default click on this face is harmless
+            }
+        }
+        return covered ? faces : -1;
+    }
+
     /** A cover on one face of a machine: the item it is, and what it holds if it is one that holds things. */
     public static final class Cover {
 

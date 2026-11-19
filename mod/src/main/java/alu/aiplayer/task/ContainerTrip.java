@@ -2,6 +2,8 @@ package alu.aiplayer.task;
 
 import alu.aiplayer.act.ContainerSession;
 import alu.aiplayer.act.Drawers;
+import alu.aiplayer.act.Machines;
+import alu.aiplayer.act.Sight;
 import alu.aiplayer.bot.Bot;
 import alu.aiplayer.nav.Goal;
 import alu.aiplayer.nav.Navigator;
@@ -20,6 +22,7 @@ final class ContainerTrip {
     private final Navigator nav;
     private boolean arrived;
     private boolean frontChecked;
+    private boolean approachingMachineFace;
     private final Bot bot;
     private final int x, y, z;
     private alu.aiplayer.nav.NavWorld.BreakRule travelRule = Rules.NATURAL_ONLY;
@@ -86,7 +89,7 @@ final class ContainerTrip {
             if (st == Navigator.Status.WORKING) return Status.WORKING;
             if (st == Navigator.Status.FAILED) {
                 failCode = nav.failCode;
-                failMessage = "cannot get to the container: " + nav.failMessage;
+                failMessage = (approachingMachineFace ? "cannot reach a machine face without operating a cover: " : "cannot get to the container: ") + nav.failMessage;
                 return Status.FAILED;
             }
             arrived = true;
@@ -96,6 +99,19 @@ final class ContainerTrip {
                 net.minecraft.tileentity.TileEntity te = bot.player().worldObj.getTileEntity(x, y, z);
                 if (Drawers.is(te) && !Drawers.inFront(bot.player(), x, y, z, Drawers.front(te))) {
                     nav.go(Goal.reachFacing(x, y, z, Drawers.front(te)), travelRule, false);
+                    arrived = false;
+                    return Status.WORKING;
+                }
+                // For an unspecified face the target is the machine, never a filter on its side.
+                int faces = Machines.machineAccessFaces(te);
+                if (faces == 0) {
+                    failCode = "unreachable";
+                    failMessage = "no machine face is known to pass a click without operating a cover; nothing was clicked";
+                    return Status.FAILED;
+                }
+                if (faces > 0 && Sight.visibleFace(bot.player(), x, y, z, faces) == null) {
+                    approachingMachineFace = true;
+                    nav.go(Sight.seeingFaces(bot.player().worldObj, x, y, z, faces), travelRule, false);
                     arrived = false;
                     return Status.WORKING;
                 }

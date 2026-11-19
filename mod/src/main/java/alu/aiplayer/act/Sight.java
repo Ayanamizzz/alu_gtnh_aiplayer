@@ -186,6 +186,46 @@ public final class Sight {
         return mo != null && mo.typeOfHit == MovingObjectPosition.MovingObjectType.BLOCK;
     }
 
+    /** First native crosshair hit on an allowed face. A covered machine must be opened from the face that
+     * is actually visible, not merely a side whose half-space contains the player. No trial clicks. */
+    private static MovingObjectPosition visibleFace(World w, double ex, double ey, double ez, int x, int y, int z,
+        int mask, double reach) {
+        if (Reach.distanceSq(ex, ey, ez, x, y, z) > reach * reach) return null;
+        for (int face = 0; face < 6; face++) {
+            if ((mask & (1 << face)) == 0) continue;
+            for (float[] uv : POINTS) {
+                double[] at = point(face, uv[0], uv[1]);
+                double dx = x + at[0] - ex, dy = y + at[1] - ey, dz = z + at[2] - ez;
+                if (dx * OUT[face][0] + dy * OUT[face][1] + dz * OUT[face][2] >= 0) break;
+                double scale = reach / Math.sqrt(dx * dx + dy * dy + dz * dz);
+                // The 1.7 ray tracer advances its start vector while traversing cells. Each ray needs its own eye.
+                Vec3 eye = Vec3.createVectorHelper(ex, ey, ez);
+                MovingObjectPosition hit = w.func_147447_a(eye, eye.addVector(dx * scale, dy * scale, dz * scale), false, false, false);
+                if (hit != null && hit.typeOfHit == MovingObjectPosition.MovingObjectType.BLOCK && hit.blockX == x
+                    && hit.blockY == y && hit.blockZ == z && hit.sideHit == face) return hit;
+            }
+        }
+        return null;
+    }
+
+    public static MovingObjectPosition visibleFace(EntityPlayerMP p, int x, int y, int z, int mask) {
+        return visibleFace(p.worldObj, p.posX, p.posY + p.getEyeHeight(), p.posZ, x, y, z, mask, CROSSHAIR_REACH);
+    }
+
+    public static Goal seeingFaces(final World world, final int x, final int y, final int z, final int mask) {
+        final Goal near = Goal.reach(x, y, z, false);
+        return new Goal() {
+            @Override
+            public boolean reached(EntityPlayerMP p) { return visibleFace(p, x, y, z, mask) != null; }
+            @Override
+            public boolean reached(int sx, int sy, int sz) {
+                return visibleFace(world, sx + 0.5, sy + Reach.EYE_HEIGHT, sz + 0.5, x, y, z, mask, Reach.PLANNING_REACH) != null;
+            }
+            @Override
+            public double heuristic(int sx, int sy, int sz) { return near.heuristic(sx, sy, sz); }
+        };
+    }
+
     /** Somewhere to stand from which a face of the block is seen (its middle), within reach. */
     public static Goal seeing(final World w, final int x, final int y, final int z, final int side, final boolean liquids) {
         return seeing(w, x, y, z, side, liquids, null);

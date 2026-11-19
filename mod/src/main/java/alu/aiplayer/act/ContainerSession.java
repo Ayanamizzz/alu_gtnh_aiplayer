@@ -171,6 +171,7 @@ public final class ContainerSession {
     /** The face to click to open the screen (0 down .. 5 east), or -1 for the one turned towards the bot. */
     private int openSide = -1;
     private boolean openSneak;
+    private boolean routedMachineClick;
 
     /**
      * Opens the screen with a click on a chosen face, sneaking or not, instead of a plain click: some blocks show
@@ -205,10 +206,20 @@ public final class ContainerSession {
             case 0: {
                 if (!w.blockExists(x, y, z)) return fail("out_of_reach", "the container is out of reach");
                 TileEntity te = w.getTileEntity(x, y, z);
+                float[] actualHit = null;
                 if (!viaFace()) {
-                    // A terminal is a part on one face of a cable: its screen opens by a click on that face.
-                    int terminal = MeNetworks.terminalSide(te, p);
-                    if (terminal >= 0) openSide = terminal;
+                    int faces = Machines.machineAccessFaces(te);
+                    if (faces >= 0) {
+                        // Re-read the covers and the ray at the actual click, after any walking.
+                        net.minecraft.util.MovingObjectPosition hit = Sight.visibleFace(p, x, y, z, faces);
+                        if (hit == null) return fail("out_of_reach", "no visible machine face can be clicked without operating a cover; nothing was clicked");
+                        openSide = hit.sideHit;
+                        actualHit = new float[] { (float) (hit.hitVec.xCoord - x), (float) (hit.hitVec.yCoord - y), (float) (hit.hitVec.zCoord - z) };
+                        routedMachineClick = true;
+                    } else {
+                        int terminal = MeNetworks.terminalSide(te, p);
+                        if (terminal >= 0) openSide = terminal;
+                    }
                 }
                 if (viaFace()) {
                     // Whatever that click opens: nothing is assumed about the block.
@@ -219,14 +230,14 @@ public final class ContainerSession {
                     if (p.openContainer != p.inventoryContainer) bot.conn()
                         .closeWindow();
                     int side = openSide >= 0 ? openSide : Reach.facingSide(p, x, y, z);
-                    float[] at = middleOf(side);
+                    float[] at = actualHit == null ? middleOf(side) : actualHit;
                     Motion.face(p, x + at[0], y + at[1], z + at[2]);
                     boolean was = p.isSneaking();
-                    if (openSneak) p.setSneaking(true);
+                    if (openSneak || routedMachineClick) p.setSneaking(openSneak);
                     try {
                         clickEmptyHanded(bot, x, y, z, side, at[0], at[1], at[2]);
                     } finally {
-                        if (openSneak) p.setSneaking(was);
+                        if (openSneak || routedMachineClick) p.setSneaking(was);
                     }
                     phase = 1;
                     wait = 0;
@@ -290,6 +301,7 @@ public final class ContainerSession {
                     wait = 0;
                     cursor = 0;
                 } else if (++wait >= OPEN_WAIT) {
+                    if (routedMachineClick) return fail("invalid", "the machine screen did not open on the selected face; no stock was transferred");
                     if (requireProcessingSlots) return fail("invalid", "the controller opened no input/output screen; nothing was put in");
                     // No screen opened although nothing refused the click: storage without one (barrels, drawers).
                     TileEntity te = w.getTileEntity(x, y, z);
