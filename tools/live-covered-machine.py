@@ -60,10 +60,11 @@ def main():
         return transfer({'type': 'withdraw', 'container': AT, 'fromInputs': True,
                          'items': [{'id': 'minecraft:cobblestone', 'count': 4}]})
 
-    def washer(cover_id=None):
+    def washer(cover_id=None, output=False):
         # Install 12 items in the real recipe input and a nonempty redstone filter on the south face.
+        product = ',{IntSlot:6,id:265s,Count:1b,Damage:0s}' if output else ''
         extra = '' if cover_id is None else (
-            ',Inventory:[{IntSlot:5,id:4s,Count:12b,Damage:0s}]'
+            ',Inventory:[{IntSlot:5,id:4s,Count:12b,Damage:0s}' + product + ']'
             ',gt.covers:[{s:3b,id:%d,d:{mWhitelist:0b,filter:{Size:1,Items:[{Slot:0,id:331s,Count:1b,Damage:0s}]}}}]' % cover_id)
         rc('setblock ' + POS + ' air')
         rc('setblock ' + POS + ' gregtech:gt.blockmachines 1 replace {nbtVersion:509054265,mID:393s,mFacing:1s,mMainFacing:4' + extra + '}')
@@ -74,7 +75,9 @@ def main():
             before = state()
             assert len(before['observed']) == 1 and before['observed'][0]['id'] == 'gregtech:gt.metaitem.01', before
             assert before['observed'][0]['meta'] == FILTER and before['covers'][0]['d']['filter']['Items'], before
-            assert len(before['input']) == 1 and before['input'][0]['count'] == 12, before
+            assert any(s['IntSlot'] == 5 and s['count'] == 12 for s in before['input']), before
+            if output:
+                assert any(s['IntSlot'] == 6 and s['item'] == 'minecraft:iron_ingot' for s in before['input']), before
             return before
 
     try:
@@ -123,6 +126,16 @@ def main():
         report['explicitCover'] = {'task': used, 'after': cleared}
         assert used['state'] == 'done' and used['result']['clicks'] == 1, used
         assert cleared['covers'][0]['d']['filter']['Items'] == [] and cleared['input'] == before['input'], cleared
+
+        # This explicit click is allowed to reach the cover but opens NO window. The machine output is
+        # accessible from above via automation, not through the clicked cover. No transfer may fall back to it.
+        before = washer(cover_id, output=True)
+        task = transfer({'type': 'withdraw', 'container': {**AT, 'side': 'south'},
+                         'items': [{'id': 'minecraft:iron_ingot', 'count': 1}]})
+        after = state()
+        report['explicitNoWindow'] = {'task': task, 'after': after}
+        assert task['state'] == 'failed' and after['input'] == before['input'], task
+        assert all(i['id'] != 'minecraft:iron_ingot' for i in call('bot.status')['inventory'])
     finally:
         try:
             if spawned:
