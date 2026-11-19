@@ -64,6 +64,8 @@ public final class ContainerSession {
     private final Bot bot;
     private final int x, y, z;
     private DepositPlan deposit;
+    private java.util.function.Predicate<Container> beforeScreenDeposit;
+    private String preparationRefusal;
     private List<ItemFilter> withdraw;
     private int[] withdrawLeft;
     private int phase; // 0 open, 1 wait for screen, 2 screen transfers, 3 direct transfers, 4 closing, 5 drawers,
@@ -147,6 +149,12 @@ public final class ContainerSession {
         return this;
     }
 
+    /** A setting needed for loading: only on a usable screen, immediately before the first ingredient click. */
+    public void beforeScreenDeposit(java.util.function.Predicate<Container> step, String refusal) {
+        beforeScreenDeposit = step;
+        preparationRefusal = refusal;
+    }
+
     public ContainerSession withdraw(List<ItemFilter> items) {
         this.withdraw = items;
         this.withdrawLeft = new int[items.size()];
@@ -210,6 +218,9 @@ public final class ContainerSession {
         EntityPlayerMP p = bot.player();
         World w = p.worldObj;
         if (opener != null && phase <= 1) return openByItem(p);
+        if (beforeScreenDeposit != null && (phase == 3 || phase == 5 || phase == 6)) {
+            return fail("invalid", "loading this batch requires the machine's own input screen; nothing was moved");
+        }
         switch (phase) {
             case 0: {
                 if (!w.blockExists(x, y, z)) return fail("out_of_reach", "the container is out of reach");
@@ -860,6 +871,21 @@ public final class ContainerSession {
                 // Counted across the whole inventory: some screens answer a shift-click by shuffling the stack
                 // to another of the bot's own slots, which is not a deposit.
                 int before = Inventories.count(p, exact(type));
+                List<Slot> targets = inputs != null ? inputs : theirs;
+                if (beforeScreenDeposit != null) {
+                    // The recipe may depend on the new circuit. Check physical room, not recipe validity with
+                    // the old setting. No attempted input, or no space for one: leave the controls alone.
+                    if (targets.stream().noneMatch(target -> hasStackSpace(target, stack))) {
+                        rejected++;
+                        continue;
+                    }
+                    if (!c.canInteractWith(p) || p.inventory.getItemStack() != null || !beforeScreenDeposit.test(c)) {
+                        failCode = "invalid";
+                        failMessage = preparationRefusal;
+                        return false;
+                    }
+                    beforeScreenDeposit = null;
+                }
                 if (inputs != null || offered < stack.stackSize) {
                     // Even a whole-stack shift lets the screen choose the destination. When the task targets
                     // recipe inputs, click those slots instead, returning anything they did not take.
@@ -869,7 +895,7 @@ public final class ContainerSession {
                         return false;
                     }
                     c.slotClick(s.slotNumber, 0, 0, p);
-                    placeCount(p, c, inputs != null ? inputs : theirs, offered);
+                    placeCount(p, c, targets, offered);
                     if (p.inventory.getItemStack() != null) c.slotClick(s.slotNumber, 0, 0, p);
                 } else c.slotClick(s.slotNumber, 0, 1, p);
                 c.detectAndSendChanges();
@@ -946,6 +972,11 @@ public final class ContainerSession {
             withdraw = null;
         }
         return deposit != null;
+    }
+
+    private static boolean hasStackSpace(Slot target, ItemStack stack) {
+        ItemStack there = target.getStack();
+        return there == null || (sameItem(there, stack) && there.stackSize < Math.min(stack.getMaxStackSize(), target.getSlotStackLimit()));
     }
 
     /** Place at most count cursor items through real clicks, matching stacks before empty slots. */

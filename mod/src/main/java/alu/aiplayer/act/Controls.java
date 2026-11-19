@@ -320,6 +320,28 @@ public final class Controls {
         } catch (NoSuchMethodException ignored) {}
     }
 
+    /** Only a circuit control bound to this exact machine/bus, on the screen the player actually opened. */
+    public static boolean selectMachineCircuit(Container c, net.minecraft.tileentity.TileEntity target, int number) {
+        Map<String, Object> panels = panels(c);
+        if (panels == null || target == null) return false;
+        try {
+            for (Object panel : panels.values()) for (Object h : handlers(panel).values()) {
+                if (!isCircuit(h) || call(field(h, "mte"), "getBaseMetaTileEntity") != target) continue;
+                pickCircuit(h, number);
+                return Machines.circuit(target) == number;
+            }
+        } catch (Exception ignored) {}
+        return false;
+    }
+
+    private static void pickCircuit(Object handler, int number) throws Exception {
+        if (number < 0 || number > 24) throw RpcException.badRequest("a programmed circuit is 0 (none) or 1-24");
+        // What picking a circuit in its little window sends: the number, or -1 for none.
+        PacketBuffer buf = buffer();
+        buf.writeShort(number == 0 ? -1 : number);
+        send(handler, 10, buf);
+    }
+
     /** Sets a switch, number, text or choice to a value, as typing or picking it does. */
     public static void set(Container c, String panel, String key, JsonElement value) {
         Object h = find(c, panel, key);
@@ -327,12 +349,8 @@ public final class Controls {
         try {
             com.google.gson.JsonPrimitive v = value.getAsJsonPrimitive();
             if (isCircuit(h)) {
-                // What picking a circuit in its little window sends: the number, or -1 for none.
                 int n = v.isNumber() ? v.getAsInt() : "none".equalsIgnoreCase(v.getAsString()) ? 0 : Integer.parseInt(v.getAsString().trim());
-                if (n < 0 || n > 24) throw RpcException.badRequest("a programmed circuit is 0 (none) or 1-24");
-                PacketBuffer buf = buffer();
-                buf.writeShort(n == 0 ? -1 : n);
-                send(h, 10, buf);
+                pickCircuit(h, n);
                 return;
             }
             requireWritable(h, key);

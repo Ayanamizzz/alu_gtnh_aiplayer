@@ -30,8 +30,8 @@ final class ContainerTrip {
     String failMessage;
     com.google.gson.JsonObject failDetail;
     /**
-     * Done once on arriving, before anything is put in or taken out: what a player sets on a machine before
-     * loading it (its programmed circuit). Returning false ends the trip as failed with failCode "invalid".
+     * Read-only checks on arrival, before the native open. Returning false ends the trip as invalid.
+     * Settings that change the machine belong in the session, after a successful open.
      */
     private java.util.function.BooleanSupplier beforeSession;
     private String beforeSessionRefusal;

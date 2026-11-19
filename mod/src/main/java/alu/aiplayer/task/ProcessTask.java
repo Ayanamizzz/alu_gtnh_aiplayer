@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Map;
 
 import net.minecraft.entity.player.EntityPlayerMP;
+import net.minecraft.inventory.Container;
 import net.minecraft.inventory.IInventory;
 import net.minecraft.item.ItemStack;
 import net.minecraft.tileentity.TileEntity;
@@ -14,6 +15,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 
 import alu.aiplayer.act.ContainerSession;
+import alu.aiplayer.act.Controls;
 import alu.aiplayer.act.Inventories;
 import alu.aiplayer.act.ItemFilter;
 import alu.aiplayer.act.Machines;
@@ -223,28 +225,32 @@ public final class ProcessTask extends Task {
             inputsLeft = new int[inputs.size()];
             trip.session.deposit(plan(inputs, inputsLeft));
             if (controllerInputs) trip.session.processingSlots();
-            // Standing at it, before anything goes in: whether it is already running a recipe of its own, and the
-            // moment a player clicks the circuit. Set afterwards, the machine could start on the first inputs with the
-            // circuit it had (a bender set to 1 made foil).
+            // Read the baseline on arrival. Selecting a circuit is a player action; wait for the usable screen.
             trip.beforeSession(() -> {
                 TileEntity m = machine();
                 busyBefore = !plain && m != null && Machines.working(m);
                 beginMonitoring();
                 if (circuit < 0) return true;
-                TileEntity where = tile(loadAt);
-                oldCircuit = where == null ? -1 : Machines.circuit(where);
                 // A machine with no circuit setting has none: clearing it (0) is already done.
-                if (oldCircuit < 0) return circuit == 0;
-                // The setting it has may be one an earlier batch of this bot's, left running, still needs: that
-                // batch's watch knows what it was before.
-                CircuitWatch prior = bot.manager()
-                    .circuitWatchAt(bot.name, bot.player().dimension, loadAt);
-                if (prior != null && prior.set == oldCircuit) joined = prior;
-                if (!Machines.setCircuit(where, circuit)) return false;
-                circuitSet = true;
+                if (Machines.circuit(tile(loadAt)) < 0) return circuit == 0;
+                trip.session.beforeScreenDeposit(this::selectLoadCircuit,
+                    "the open input screen did not allow the requested circuit setting; nothing was put in");
                 return true;
             }, "this " + (multi ? "input bus" : "machine") + " has no programmed-circuit setting; nothing was put in");
         }
+    }
+
+    /** After opening, before the first ingredient: use the circuit of this machine/bus, not another panel's. */
+    private boolean selectLoadCircuit(Container screen) {
+        TileEntity where = tile(loadAt);
+        oldCircuit = Machines.circuit(where);
+        if (oldCircuit < 0) return false;
+        if (oldCircuit != circuit && !Controls.selectMachineCircuit(screen, where, circuit)) return false;
+        // An earlier leave batch may own the current setting; keep its original restoration value.
+        CircuitWatch prior = bot.manager().circuitWatchAt(bot.name, bot.player().dimension, loadAt);
+        if (prior != null && prior.set == oldCircuit) joined = prior;
+        circuitSet = oldCircuit != circuit || joined != null;
+        return true;
     }
 
     private static int emptySlots(TileEntity bus) {

@@ -63,6 +63,10 @@ async function open() {
   await game.screenOpen(bot, machine)
   return until('native machine screen', async () => { const s = await game.screenLook(bot); return s.slots?.some(x => x.role === 'input') && s.slots }, 5000)
 }
+async function readCircuit() {
+  await open(); const s = await game.screenLook(bot); await game.screenClose(bot)
+  return s.controls?.find(c => c.kind === 'circuit')?.value
+}
 async function manualPlace(kind: Item, role: string) {
   const slots = await open(), source = slots.find(s => s.own && s.item?.id === kind.id && s.item?.meta === kind.meta)
   const dest = slots.find(s => s.role === role && !s.item)
@@ -122,6 +126,51 @@ try {
     await checkState([raw(1)], [stack(0,36,sword.id)])
     assert.equal(t.state,'failed'); assert.deepEqual(t.result?.returnedInputs,[])
     assert.deepEqual(stock(t.result?.inputsNotReturned as Item[]),stock([raw(1)])); assert.match(String(t.result?.returnFailure),/inventory_full/)
+  })
+  await scenario('interrupted-open', async () => {
+    await reset(213); await give(stack(23032,2))
+    let atOpen: unknown
+    const t = await task('process_items',{machine,inputs:[stack(23032,1)],circuit:1},async () => {
+      const screen = await until('just-opened machine',async () => {
+        const s = await game.screenLook(bot)
+        return s.open && s.slots?.some(x => x.own && x.item?.meta === 23032) && s
+      }, 5000, 0)
+      atOpen = screen.controls?.find(c => c.kind === 'circuit')?.value
+      await game.screenClose(bot) // player closes the newly opened screen before allowing an ingredient click
+    })
+    const after = await readCircuit()
+    console.log(JSON.stringify({ atOpen, after }))
+    assert.equal(t.state,'failed'); assert.equal(t.result?.put,0)
+    await checkState([],[stack(23032,2)])
+    assert.equal(atOpen,0,'circuit changed before the interrupted screen could be used'); assert.equal(after,0)
+  })
+  await scenario('empty-kit-resident', async () => {
+    await reset(213, ',mStoredEnergy:32768L,mItemTransfer:1b')
+    const rod = stack(23032,1)
+    await give(rod); await manualPlace(rod,'input') // circuit 1 would use this resident rod to make a fence
+    const t = await task('process_items',{machine,inputs:[raw(1)],circuit:1}) // no requested material is carried
+    assert.equal(t.state,'failed'); assert.equal(t.result?.put,0)
+    assert.equal(await readCircuit(),0); await checkState([rod],[])
+  })
+  await scenario('circuit-recipes', async () => {
+    const rod = (n: number) => stack(23032,n), ring = (n: number) => stack(28032,n)
+    await reset(213, ',mStoredEnergy:32768L,mItemTransfer:1b,mFluid:{FluidName:"molten.plastic",Amount:21852}')
+    await give(rod(1))
+    const fence = stack(0,1,'gregtech:gt.blockfencemetal')
+    const first = await task('process_items',{machine,circuit:1,inputs:[rod(1)],expect:[fence]})
+    assert.equal(first.state,'done'); await checkState([],[],[fence])
+    assert.equal(await readCircuit(),0,'original none restored')
+    await open()
+    const control = (await game.screenLook(bot)).controls?.find(c => c.kind === 'circuit'); assert.ok(control)
+    await game.screenSet(bot,{panel:control.panel,key:control.key,value:1}); await game.screenClose(bot)
+    await give(rod(5),ring(4))
+    const leave = await task('process_items',{machine,recipe:109339,rounds:2,leave:true}) // requires circuit none
+    assert.equal(leave.state,'done'); assert.equal(leave.result?.left,true)
+    await until('two wheels delivered and leave circuit restored to 1',async () => {
+      const output = (await game.worldContainers(chest,{radius:0})).containers?.[0]?.items ?? []
+      return output.some(i => i.meta===32100 && i.count===2) && (await game.worldMachines(machine,{radius:0})).machines?.[0]?.circuit===1
+    }, 30000)
+    await checkState([], [rod(3)], [fence,stack(32100,2)])
   })
   await scenario('reactor', async () => {
     await reset(421, ',mStoredEnergy:2048L')
