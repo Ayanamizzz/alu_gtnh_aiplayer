@@ -309,13 +309,13 @@ public final class ContainerSession {
                     wait = 0;
                     cursor = 0;
                 } else if (++wait >= OPEN_WAIT) {
+                    TileEntity te = w.getTileEntity(x, y, z);
                     // An explicit GT face may legitimately run a cover action without opening a screen.
                     // Never interpret that as permission to transfer from a different side of the host.
                     if (routedMachineClick || (viaFace() && Machines.isGregTech(te)))
                         return fail("invalid", "no inventory screen opened on the selected machine face; no stock was transferred");
                     if (requireProcessingSlots) return fail("invalid", "the controller opened no input/output screen; nothing was put in");
                     // No screen opened although nothing refused the click: storage without one (barrels, drawers).
-                    TileEntity te = w.getTileEntity(x, y, z);
                     if (needsRecipeInputs(te)) return fail("invalid", "the machine opened no input screen; nothing was moved");
                     if (MeNetworks.isTerminalHost(te)) {
                         // The plain terminal opens for anyone; the crafting and pattern terminals only for players
