@@ -38,6 +38,19 @@ function testserverBridgePort(): number {
 export const TESTSERVER_BRIDGE_PORT = testserverBridgePort()
 export const TOKEN_FILE = path.join(REPO_ROOT, 'testserver', 'config', 'aiplayer', 'bridge-token.txt')
 
+/** Destructive fixtures require this checkout's own loopback-only instance, not the shared test server defaults. */
+export function assertPrivateTestserver(): void {
+  const ts = path.join(REPO_ROOT, 'testserver')
+  if (fs.realpathSync(ts) !== ts) throw new Error('testserver must belong to this checkout')
+  const props = new Map(fs.readFileSync(path.join(ts, 'server.properties'), 'utf8').split(/\r?\n/).map(l => l.split('=', 2) as [string,string]))
+  const mod = JSON.parse(fs.readFileSync(path.join(ts, 'config/aiplayer/aiplayer.json'), 'utf8'))
+  if (props.get('server-ip') !== '127.0.0.1' || mod.bridgeHost !== '127.0.0.1') throw new Error('testserver must bind game, RCON and bridge to loopback')
+  for (const [key, configured] of [['GAME', props.get('server-port')], ['RCON', props.get('rcon.port')], ['BRIDGE', mod.bridgePort]] as const) {
+    const port = Number(localSetting(`AIPLAYER_TEST_${key}_PORT`))
+    if (!Number.isInteger(port) || port < 1 || RESERVED_PORTS.includes(port) || port !== Number(configured)) throw new Error(`configure a dedicated testserver ${key} port first`)
+  }
+}
+
 export const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 export const stamp = () => new Date().toTimeString().slice(0, 8)
 export const say = (line: string) => console.log(`${stamp()} ${line}`)

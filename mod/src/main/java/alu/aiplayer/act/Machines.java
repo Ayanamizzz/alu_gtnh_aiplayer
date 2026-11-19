@@ -408,6 +408,20 @@ public final class Machines {
         return out;
     }
 
+    /** Pending products of the running recipe, not the liquid already stored in the machine's tanks. */
+    public static net.minecraftforge.fluids.FluidStack[] recipeFluids(TileEntity te) {
+        Object m = meta(te);
+        if (m != null) try {
+            if (basicClass.isInstance(m)) {
+                net.minecraftforge.fluids.FluidStack f = (net.minecraftforge.fluids.FluidStack) m.getClass().getField("mOutputFluid").get(m);
+                if (f != null) return new net.minecraftforge.fluids.FluidStack[] { f };
+            } else {
+                return (net.minecraftforge.fluids.FluidStack[]) m.getClass().getField("mOutputFluids").get(m);
+            }
+        } catch (ReflectiveOperationException ignored) {}
+        return null;
+    }
+
     public static boolean isActive(TileEntity te) {
         try {
             return meta(te) != null && (Boolean) active.invoke(te);
@@ -456,6 +470,8 @@ public final class Machines {
                 .get(m);
             if (items != null) for (Object o : items) if (o != null) return o;
         } catch (Throwable ignored) {}
+        net.minecraftforge.fluids.FluidStack[] fluids = recipeFluids(te);
+        if (fluids != null) for (net.minecraftforge.fluids.FluidStack f : fluids) if (f != null) return f;
         return null;
     }
 

@@ -103,7 +103,7 @@ async function main(): Promise<number> {
     step((seen) => {
       expect(seen, /任务 \w+（process）完成了。/, '照配方做：完成了')
       expect(seen, /it finished 2 round\(s\) of a recipe, making 2× gregtech:gt\.metaitem\.01\/32100/, '做了 2 轮、2 个车轮')
-      expect(seen, new RegExp(`is now in: 2× gregtech:gt\\.metaitem\\.01/32100 [^;]*at \\(${chest.x},${chest.y},${chest.z}\\), against the west face`), '车轮在西边的箱子里')
+      expect(seen, new RegExp(`nearby containers gained matching items: 2× gregtech:gt\\.metaitem\\.01/32100 [^;]*at \\(${chest.x},${chest.y},${chest.z}\\), against the west face`), '车轮在西边的箱子里')
       return { text: '车轮做好了，在西边箱子里。' }
     }),
   )
@@ -190,8 +190,8 @@ async function main(): Promise<number> {
       step((seen) => {
         expect(seen, /任务 \w+（process）失败了：invalid — the machine ran another recipe than the one these inputs were for: it made \(or was making\) 1x Iron Fence \[gregtech:gt\.blockfencemetal:0\], none of 2x Iron Minecart Wheels \[gregtech:gt\.metaitem\.01:32100\]/, '做的不是车轮：失败了，说做了什么、要的是什么')
         expect(seen, /it ran with programmed circuit 1 as this task set it \(set back to 1 now\)/, '说了它是带着几号电路跑的')
-        expect(seen, /took out: 4× gregtech:gt\.metaitem\.01\/28032 [^,;]*, 1× gregtech:gt\.metaitem\.01\/23032/, '没进配方的 4 铁环 1 铁杆取回来了')
-        expect(seen, new RegExp(`is now in: 1× gregtech:gt\\.blockfencemetal [^;]*at \\(${chest.x},${chest.y},${chest.z}\\)`), '铁栅栏在西边的箱子里')
+        expect(seen, /inputs actually returned: 4× gregtech:gt\.metaitem\.01\/28032 [^,;]*, 1× gregtech:gt\.metaitem\.01\/23032/, '没进配方的 4 铁环 1 铁杆取回来了')
+        expect(seen, new RegExp(`nearby containers gained matching items: 1× gregtech:gt\\.blockfencemetal [^;]*at \\(${chest.x},${chest.y},${chest.z}\\)`), '铁栅栏在西边的箱子里')
         return { text: '组装机做成了铁栅栏，不是车轮；剩下的料取回来了。' }
       }),
     )

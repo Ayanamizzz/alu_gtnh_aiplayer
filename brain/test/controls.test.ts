@@ -392,7 +392,7 @@ describe('机器自己的自动输出', () => {
 })
 
 describe('产物是流体的加工', () => {
-  it('流体提取机化钢板：任务算做成，结果里说清没有物品出来、做出来的是流体、现在在机器的罐里有多少（中文名），以及流体不会自己到别处去', async (t) => {
+  it('旧流体提取机回执只有罐存量：报中文名和余量，不照抄旧身体把罐存量称作产物的说明', async (t) => {
     const h = setup(t)
     h.llm.enqueue(reply('', [{ name: 'process_items', input: { machine: EXTRACTOR, inputs: [{ id: GT, meta: 17305, count: 2 }] } }]), reply(''))
     h.agent.handleEvent(told('把两个钢板化了'))
@@ -415,7 +415,7 @@ describe('产物是流体的加工', () => {
     const woken = h.llm.lastUserText(before)
     assert.match(
       woken,
-      /任务 t1（process）完成了。 结果：put 2 item\(s\) into the machine; took out: nothing; it ran, and what it made is a fluid, not an item: it is in the machine's tank, which now holds 288 of 32000 mB 熔融钢 \[fluid molten\.steel\]; empty \(holds up to 16000 mB\)\. A fluid stays where it is until the machine's own auto-output, a pipe or a fluid container moves it; freeSlots 35$/m,
+      /任务 t1（process）完成了。 结果：put 2 item\(s\) into the machine; net inventory gain: none; tank stock at end: 288 of 32000 mB 熔融钢 \[fluid molten\.steel\]; empty \(holds up to 16000 mB\); freeSlots 35$/m,
     )
     // 身体那句英文说明讲的是同一件事，没有再原样贴一遍
     assert.equal(woken.includes('fluids shows what is there now'), false)
@@ -434,7 +434,7 @@ describe('产物是流体的加工', () => {
     await waitFor('the routine finished', () => h.agent.status().routine?.status === 'done')
     const got = JSON.parse(h.agent.status().routine!.value!)
     assert.equal(got.ok, true)
-    assert.match(got.text, /; it ran, and what it made is a fluid, not an item: it is in the machine's output hatches, which now hold output hatch \(-518,70,58\): 1000 of 16000 mB 熔融钢 \[fluid molten\.steel\]; output hatch \(-518,71,58\): empty \(holds up to 16000 mB\)\. A fluid stays where it is /)
+    assert.match(got.text, /; tank stock at end: output hatch \(-518,70,58\): 1000 of 16000 mB 熔融钢 \[fluid molten\.steel\]; output hatch \(-518,71,58\): empty \(holds up to 16000 mB\)/)
     assert.deepEqual(got.fluids, [{ ...HATCHES[0], fluidName: '熔融钢', fluidEn: 'Molten Steel' }, HATCHES[1]])
   })
 
@@ -447,6 +447,6 @@ describe('产物是流体的加工', () => {
     h.llm.enqueue(reply(''))
     h.agent.handleEvent(taskEnded('t1', 'done', { type: 'process', result: { put: 2, outputs: [{ id: GT, meta: 32322, name: 'Mold (Ring)', count: 1 }], freeSlots: 34 } }))
     await h.agent.whenIdle()
-    assert.match(h.llm.lastUserText(before), /任务 t1（process）完成了。 结果：put 2 item\(s\) into the machine; took out: 1× gregtech:gt\.metaitem\.01\/32322 "模具（环）"; freeSlots 34$/m)
+    assert.match(h.llm.lastUserText(before), /任务 t1（process）完成了。 结果：put 2 item\(s\) into the machine; net inventory gain: 1× gregtech:gt\.metaitem\.01\/32322 "模具（环）"; freeSlots 34$/m)
   })
 })

@@ -63,8 +63,13 @@ export interface TaskInfo {
    *   注意东西不够时任务照样是 done）；haul：moved、trips；collect：pickedUpStacks；give：dropped
    * - 移动类：block（{x,y,z}），home 另有 dim
    * - craft：crafted（多出来的个数）、item（{id,meta,name}）、freeSlots
-   * - process：put（放进机器的个数）、outputs（[{id,meta,name,count}]，取回来的东西，含没被消耗的电路、模具和没用完的原料）、
-   *   timedOut（等到 wait 还没做完）、freeSlots
+   * - process 有投料：put 为投入件数；兼容字段 outputs（outputsBasis: positiveInventoryDeltaSinceLoad）是投料后
+   *   按 id/meta 统计的背包正净增，可能含退料、产物或别处捡的东西。collected 是输出取货阶段经 GUI 实收的物品（含原有库存）；
+   *   returnedInputs 是从原料格实际退回的物品。两者按操作分别计数，同一种物品可各占一部分。三项均为 [{id,meta,name,count}]。
+   *   rounds / made / madeFluids 是观察到完工的轮数、物品和流体；elsewhere 是周围容器里匹配物品的净增。
+   *   fluids 是末态罐/输出仓快照，fluidChanges 为可读库存按液种的 {fluid,before,after,delta}（mB），不是收发流水。
+   *   无新增投料（observedExisting）时，outputs 是实际收货量，observedMade / observedMadeFluids 只计观察期间的完工。
+   *   leave 不等完工；timedOut 表示达到了 wait 上限。
    * - use：used（拿在手里用的那件东西的名字）、gained / lost（[{id,meta,name,count}]，背包里多了、少了什么）、
    *   left（请求的按钮，准备失败也报告）、clicks（实际尝试次数；0表示未点）、
    *   openedScreen（右键打开了界面，已经关掉）、health、food、freeSlots

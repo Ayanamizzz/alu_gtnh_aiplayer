@@ -79,7 +79,9 @@ public final class ProcessTask extends Task {
     private int poured;
     private int lastPoured;
     private Map<String, Integer> before;
-    private JsonArray outputs = new JsonArray();
+    /** Actual receipts from the output collection stage, including partial pickups and stock already there. */
+    private final List<Kinds> pickups = new ArrayList<>();
+    private final ProcessFluids fluidReceipt = new ProcessFluids();
     private boolean timedOut;
 
     public ProcessTask(JsonObject params) {
@@ -308,13 +310,15 @@ public final class ProcessTask extends Task {
     }
 
     /** What the machine's tanks (a multiblock's output hatches) hold, to tell afterwards whether that changed. */
-    private com.google.gson.JsonElement fluidState() {
+    private JsonArray fluidState() {
         try {
             TileEntity m = machine();
             if (m == null) return new JsonArray();
             if (multi) {
-                JsonObject d = Machines.describe(m);
-                return d != null && d.has("outputHatches") ? d.get("outputHatches") : new JsonArray();
+                JsonArray hatches = new JsonArray();
+                for (TileEntity hatch : Machines.ports(m, "output hatch")) hatches.add(Machines.describePort(hatch));
+                if (hatches.size() > 0) return hatches;
+                // A controller with no output hatches can have tanks of its own.
             }
             return Machines.tanks(m);
         } catch (Throwable t) {
@@ -322,11 +326,8 @@ public final class ProcessTask extends Task {
         }
     }
 
-    private String fluidsBefore;
-    private com.google.gson.JsonElement fluidsAfter;
-
     private void beginMonitoring() {
-        fluidsBefore = fluidState().toString();
+        fluidReceipt.start(fluidState());
         TileEntity te = machine();
         if (te instanceof IInventory) contents = fingerprint((IInventory) te);
         residentInputs = inputCounts();
@@ -368,20 +369,25 @@ public final class ProcessTask extends Task {
 
     /**
      * Called every tick while the machine works: a run has ended when the recipe it was on is gone, its progress went
-     * back, or it holds the products of a new recipe. A machine switched off or shut down (a multiblock out of power)
-     * loses its recipe without finishing it; that is no run.
+     * back, or it holds the products of a new recipe. A stopped multiblock can discard unfinished work. A GT basic
+     * machine switched off in mid-round can still run its last tick and deliver; switching off prevents the next start.
      */
     private void watchRounds(TileEntity te) {
         int max = Machines.maxProgress(te), progress = Machines.progress(te);
-        Object token = Machines.recipeToken(te);
-        boolean ended = lastMax > 0 && Machines.allowedToWork(te)
-            && (max == 0 || (progress >= 0 && progress < lastProgress) || (token != null && lastToken != null && token != lastToken));
+        Object token = max > 0 ? Machines.recipeToken(te) : null;
+        boolean lastTickFinished = Machines.isProcessor(te) && max == 0 && lastProgress == lastMax - 1;
+        boolean ended = lastMax > 0 && (lastTickFinished || (Machines.allowedToWork(te)
+            && (max == 0 || (progress >= 0 && progress < lastProgress) || (token != null && lastToken != null && token != lastToken))));
         if (ended) {
             rounds++;
+            fluidReceipt.completed();
             if (lastMaking != null) for (com.google.gson.JsonElement e : lastMaking) made.add(e.getAsJsonObject());
         }
         if (max <= 0) lastMaking = null;
-        else if (lastMaking == null || token != lastToken) lastMaking = Machines.making(te);
+        else if (ended || lastMaking == null || token != lastToken) {
+            lastMaking = Machines.making(te);
+            fluidReceipt.recipe(Machines.recipeFluids(te));
+        }
         lastMax = max;
         lastProgress = progress;
         lastToken = token;
@@ -396,8 +402,8 @@ public final class ProcessTask extends Task {
     private final List<Map<String, JsonObject>> aroundBefore = new ArrayList<>();
     /** Products found in those containers at the end: [{x, y, z, name, side?, bus?, items}]. */
     private JsonArray elsewhere = new JsonArray();
-    /** It made things and none could be taken out: they were moved on while it worked. */
-    private boolean sentAway;
+    /** Nothing was collected despite a completed round: configuration is a clue, not proof of a destination. */
+    private boolean uncollected;
 
     private void lookAround() {
         around.clear();
@@ -605,6 +611,7 @@ public final class ProcessTask extends Task {
                     phase = "collecting the output";
                     unloadIndex = 0;
                     collect(unloadAt.get(0), false);
+                    pickups.add(trip.session.received);
                     stage = 2;
                 }
                 break;
@@ -613,13 +620,13 @@ public final class ProcessTask extends Task {
                 ContainerTrip.Status st = trip.tick();
                 if (st == ContainerTrip.Status.WORKING) return;
                 if (st == ContainerTrip.Status.FAILED && unloadIndex + 1 >= unloadAt.size() + passedTo.size()) {
-                    outputs = gained();
                     restoreCircuit();
                     fail(trip);
                     return;
                 }
                 if (++unloadIndex < unloadAt.size()) {
                     collect(unloadAt.get(unloadIndex), false);
+                    pickups.add(trip.session.received);
                     return;
                 }
                 int beyond = unloadIndex - unloadAt.size();
@@ -630,6 +637,7 @@ public final class ProcessTask extends Task {
                         phase = "looking where the output bus passes things on";
                         trip = new ContainerTrip(bot, where[0], where[1], where[2]);
                         trip.session.withdraw(still);
+                        pickups.add(trip.session.received);
                         return;
                     }
                 }
@@ -661,7 +669,6 @@ public final class ProcessTask extends Task {
                 if (leave) {
                     // Not left running on the wrong thing, and not waited on either: the round it is on is its own.
                     restoreCircuit();
-                    outputs = gained();
                     elsewhere = foundAround();
                     failOtherRecipe(true);
                     return;
@@ -679,7 +686,6 @@ public final class ProcessTask extends Task {
                 }
                 noteReturned(trip == null ? ContainerTrip.Status.DONE : trip.failCode == null ? ContainerTrip.Status.DONE : ContainerTrip.Status.FAILED);
                 restoreCircuit();
-                outputs = gained();
                 elsewhere = foundAround();
                 TileEntity te = machine();
                 fail(
@@ -726,7 +732,7 @@ public final class ProcessTask extends Task {
             if (st == ContainerTrip.Status.WORKING) return;
             if (st == ContainerTrip.Status.FAILED) { fail(trip); return; }
             before = carried();
-            fluidsBefore = fluidState().toString();
+            fluidReceipt.start(fluidState());
             phase = "observing existing processing (not a batch started by this task)";
             stage = 11;
         }
@@ -742,7 +748,6 @@ public final class ProcessTask extends Task {
         if (making != null) for (com.google.gson.JsonElement e : making) if (isExpected(Kinds.key(e.getAsJsonObject()))) matchesCurrent = true;
         if (!matchesCurrent) {
             if (trip != null) trip.stop();
-            outputs = gained();
             fail("invalid", "the existing machine recipe does not make the expected items; no inputs or circuit were changed; observed: " + kindsText(making));
             return;
         }
@@ -751,7 +756,6 @@ public final class ProcessTask extends Task {
         if (stage == 12) {
             ContainerTrip.Status st = trip.tick();
             if (st == ContainerTrip.Status.WORKING) return;
-            outputs = gained();
             if (st == ContainerTrip.Status.FAILED) { fail(trip); return; }
             // Preserve the first blocked pickup before moving to another bus (which replaces trip).
             // A later bus may satisfy the goal, but it must not hide why earlier stock could not be taken.
@@ -790,7 +794,6 @@ public final class ProcessTask extends Task {
             collectObserved();
             stage = 12;
         } else if (observationStopped) {
-            fluidsAfter = fluidState();
             finishObservation();
         }
     }
@@ -807,7 +810,6 @@ public final class ProcessTask extends Task {
 
     /** Completing the observation is not the same thing as completing a requested collection. */
     private void finishObservation() {
-        outputs = gained();
         if (!leave && !expect.isEmpty() && !stillExpected().isEmpty()) {
             observationStopReason = timedOut ? "wait_limit" : "machine_idle";
             fail("invalid", "observation stopped " + (timedOut ? "at the wait limit" : "because the machine is idle")
@@ -824,10 +826,10 @@ public final class ProcessTask extends Task {
         int[] pos = unloadAt.get(unloadIndex);
         trip = new ContainerTrip(bot, pos[0], pos[1], pos[2]);
         trip.session.withdraw(stillExpected()).boundedWithdrawal(); // output slots only; never resident moulds
+        pickups.add(trip.session.received);
     }
 
     private String notStarted;
-    private boolean passedOn;
     /** It was seen making none of what was expected, and what had not gone in was taken back out. */
     private boolean takenBack;
     /**
@@ -939,19 +941,23 @@ public final class ProcessTask extends Task {
     /** Whether it was seen running a recipe (not just with its active flag up). */
     private boolean sawWorking;
 
-    /** What the caller expects to get and the bot has not yet gained since loading. */
+    private static JsonArray receipts(List<Kinds> sessions) {
+        Kinds got = new Kinds();
+        for (Kinds pickup : sessions) for (com.google.gson.JsonElement e : pickup.toJson()) got.add(e.getAsJsonObject());
+        return got.toJson();
+    }
+
+    /** Expected items still to pick up. Neither a returned input nor a pickup elsewhere fills the request. */
     private List<ItemFilter> stillExpected() {
         List<ItemFilter> out = new ArrayList<>();
-        Map<String, Integer> now = carried();
+        JsonArray received = receipts(pickups);
         for (ItemFilter f : expect) {
-            int gainedSoFar = 0;
-            for (ItemStack s : bot.player().inventory.mainInventory) {
-                if (s == null || !f.matches(s)) continue;
-                String key = Names.itemId(s.getItem()) + "@" + Names.meta(s);
-                Integer had = before == null ? null : before.get(key);
-                gainedSoFar = Math.max(gainedSoFar, now.get(key) - (had == null ? 0 : had));
+            int got = 0;
+            for (com.google.gson.JsonElement e : received) {
+                JsonObject item = e.getAsJsonObject();
+                if (f.id.equals(J.str(item, "id", "")) && (f.meta < 0 || f.meta == J.i(item, "meta", 0))) got += J.i(item, "count", 0);
             }
-            int want = f.count <= 0 ? 64 : f.count - gainedSoFar;
+            int want = f.count <= 0 ? 64 : f.count - got;
             if (want > 0) out.add(new ItemFilter(f.id, f.meta, want));
         }
         return out;
@@ -959,40 +965,21 @@ public final class ProcessTask extends Task {
 
     private void finish() {
         restoreCircuit();
-        outputs = gained();
         elsewhere = foundAround();
         if (otherRecipe() != null) {
             // It made things, and none of them is what the inputs were for: not done, whatever came back.
             failOtherRecipe(false);
-        } else if (outputs.size() == 0 && multi && passedTo.size() > 0) {
-            // It ran, and the output bus is empty because it does not keep things. That is how this machine is
-            // set up, not a failure; the products are for whoever asked to go and find.
-            passedOn = true;
+        } else if (receipts(pickups).size() > 0) {
             done();
-        } else if (outputs.size() == 0 && fluidsBefore != null && !fluidState().toString()
-            .equals(fluidsBefore)) {
-                // Nothing came out as an item, and what its tanks hold has changed: it ran, and what it made is
-                // a fluid. That stays where it is; the result says what is there now.
-                fluidsAfter = fluidState();
-                done();
-            } else if (outputs.size() == 0 && (rounds > 0 || elsewhere.size() > 0)) {
-                // It finished recipes, or things it makes turned up next to it, and nothing was left in it to take:
-                // its auto-output, a cover or a pipe moved them on while it worked. Made, not failed.
-                sentAway = true;
-                done();
-            } else if (outputs.size() == 0 && timedOut && sawWorking) {
-                // Still on its first round when the wait ran out: not failed either, just not done yet.
-                done();
-            } else if (outputs.size() == 0) {
-                fail(
-                    "invalid",
-                    "the machine ran but nothing could be taken out of it"
-                        + (plain ? ", and nothing it might have made turned up next to it" : ", and it was not seen to finish a recipe")
-                        + (multi ? "; its products may be fluids, which stay in the output hatch" : ""),
-                    plain ? null : Machines.describe(machine()));
-            } else {
-                done();
-            }
+        } else if (rounds > 0 || elsewhere.size() > 0) {
+            uncollected = true;
+            done();
+        } else if (timedOut && sawWorking) {
+            done();
+        } else {
+            fail("invalid", "no item was collected, no matching item gain was found nearby, and no recipe completion was observed",
+                plain ? null : Machines.describe(machine()));
+        }
     }
 
     /** An earlier batch of this bot's on the same circuit setting, still watched to be set back. */
@@ -1020,18 +1007,15 @@ public final class ProcessTask extends Task {
      * Takes back out of the input slots what the bot put in and the machine has not used, as many of each as it
      * put in. What was in there before (a mould someone keeps there) is theirs and stays.
      */
-    private List<ItemFilter> returnWanted;
-    private final Kinds returnedInputs = new Kinds();
+    private final List<Kinds> inputPickups = new ArrayList<>();
     private boolean returnAttempted;
     private String returnFailure;
 
     private void noteReturned(ContainerTrip.Status status) {
-        if (returnWanted == null || trip == null) return;
-        for (com.google.gson.JsonElement e : trip.session.received.toJson()) returnedInputs.add(e.getAsJsonObject());
+        if (trip == null) return;
         if (status == ContainerTrip.Status.FAILED) returnFailure = trip.failCode + ": " + trip.failMessage;
         else if (trip.session.inventoryFull) returnFailure = "inventory_full: no capacity for the remaining input pickup";
         else if (trip.session.pickupLimited) returnFailure = "pickup_limited: remaining input cannot be taken without extra";
-        returnWanted = null;
     }
 
     private int[] inputCounts() {
@@ -1062,8 +1046,8 @@ public final class ProcessTask extends Task {
             trip = null;
             return;
         }
-        returnWanted = own;
         trip = new ContainerTrip(bot, loadAt[0], loadAt[1], loadAt[2]);
+        inputPickups.add(trip.session.received);
         trip.session.withdraw(own)
             .returnIngredients();
     }
@@ -1190,12 +1174,15 @@ public final class ProcessTask extends Task {
     protected JsonObject summary() {
         JsonObject o = new JsonObject();
         o.addProperty("put", put);
+        if (finished() && !left && bot != null && bot.online() && (monitoring || before != null)) {
+            fluidReceipt.report(o, fluidState(), observing);
+        }
         if (observing) {
             o.addProperty("observedExisting", true);
             o.addProperty("alreadyWorking", busyBefore);
             o.addProperty("startedByTask", false);
             o.add("existingOutputs", existingOutputs);
-            o.add("outputs", outputs);
+            o.add("outputs", receipts(pickups));
             if (pickupLimited != null) o.add("pickupLimited", pickupLimited);
             o.addProperty("observedRounds", rounds);
             o.add("observedMade", made.toJson());
@@ -1208,7 +1195,6 @@ public final class ProcessTask extends Task {
             }
             if (observationStopReason != null) o.addProperty("stopReason", observationStopReason);
             if (leftState != null) o.add("machine", leftState);
-            if (fluidsAfter != null) o.add("fluids", fluidsAfter);
             o.addProperty("note", "No inputs were added and no circuit or mould was changed. This task observed existing processing, not a batch it started. existingOutputs were present on arrival; observedRounds/observedMade are only completions seen while watching, not ownership or proof of the requested number of rounds. outputs are the expected items actually collected (including any already present), at most the requested counts."
                 + (leave ? " Observation ended without waiting or collecting; production is not complete." : ""));
             return o;
@@ -1237,14 +1223,19 @@ public final class ProcessTask extends Task {
             if (bot != null && bot.online()) o.addProperty("freeSlots", Inventories.freeSlots(bot.player()));
             return o;
         }
-        o.add("outputs", outputs);
+        // Preserve the public outputs field for older scripts; it is neither a pickup log nor a production tally.
+        o.add("outputs", before != null && bot != null && bot.online() ? gained() : new JsonArray());
+        o.addProperty("outputsBasis", "positiveInventoryDeltaSinceLoad");
+        JsonArray collected = receipts(pickups);
+        o.add("collected", collected);
         if (returnAttempted) {
-            o.add("returnedInputs", returnedInputs.toJson());
+            JsonArray returnedInputs = receipts(inputPickups);
+            o.add("returnedInputs", returnedInputs);
             JsonArray notReturned = new JsonArray();
             for (int i = 0; i < inputs.size(); i++) {
                 ItemFilter f = inputs.get(i);
                 int n = f.count - (inputsLeft == null ? f.count : inputsLeft[i]);
-                for (com.google.gson.JsonElement e : returnedInputs.toJson()) {
+                for (com.google.gson.JsonElement e : returnedInputs) {
                     JsonObject item = e.getAsJsonObject();
                     if (f.id.equals(J.str(item, "id", "")) && (f.meta < 0 || f.meta == J.i(item, "meta", 0))) n -= J.i(item, "count", 0);
                 }
@@ -1258,7 +1249,7 @@ public final class ProcessTask extends Task {
         if (rounds > 0) o.addProperty("rounds", rounds);
         if (!made.isEmpty()) o.add("made", made.toJson());
         if (elsewhere.size() > 0) o.add("elsewhere", elsewhere);
-        if (sentAway || elsewhere.size() > 0) {
+        if (uncollected || elsewhere.size() > 0) {
             // How things leave this machine by themselves: its own auto-output, and what is plumbed into it.
             TileEntity te = machine();
             JsonObject auto = te == null ? null : Machines.autoOutput(te);
@@ -1266,38 +1257,14 @@ public final class ProcessTask extends Task {
             JsonArray attached = te == null ? new JsonArray() : alu.aiplayer.world.WorldQueries.attached(te.getWorldObj(), te);
             if (attached.size() > 0) o.add("attached", attached);
         }
-        if (sentAway && plain) {
+        if (uncollected && plain) {
             o.addProperty(
                 "note",
                 "nothing could be taken out of the machine, and while it ran, things that are not among the inputs turned"
                     + " up in the containers around it (elsewhere). Its recipes cannot be read, so that they came from it"
                     + " is likely, not certain");
-        } else if (sentAway) {
-            o.addProperty(
-                "note",
-                "the machine ran and made things, but none were left in it to take out: something moved them on while it"
-                    + " worked (its auto-output, a cover or a pipe). elsewhere lists the containers around it that gained"
-                    + " them; what is not there went further than can be seen from the machine");
-        } else if (timedOut && outputs.size() == 0 && rounds == 0) {
-            o.addProperty(
-                "note",
-                "the wait ran out while the machine was still on its first recipe; what it finishes stays in it");
         }
-        if (passedOn) {
-            o.addProperty(
-                "note",
-                "the machine ran, but its output bus passes what it gets on to other containers, so the products"
-                    + " are not in the inventory; look for them in passedTo (give expect to have them fetched)");
-        }
-        if (passedToJson.size() > 0 && (passedOn || outputs.size() == 0)) o.add("passedTo", passedToJson);
-        if (fluidsAfter != null) {
-            o.addProperty(
-                "note",
-                "the machine ran and gave no item: what it made is a fluid, which stays in "
-                    + (multi ? "its output hatches" : "its tank")
-                    + " (fluids shows what is there now)");
-            o.add("fluids", fluidsAfter);
-        }
+        if (passedToJson.size() > 0 && collected.size() == 0) o.add("passedTo", passedToJson);
         if (timedOut) o.addProperty("timedOut", true);
         if (bot != null && bot.online()) o.addProperty("freeSlots", Inventories.freeSlots(bot.player()));
         return o;

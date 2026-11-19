@@ -1644,13 +1644,14 @@ function machineStateText(m: MachineInfo | Record<string, unknown>, wayName?: Wa
  * 单方块机器自己的自动输出（界面上的两个开关）：开着时，做出来的东西不留在它的产物格里，从输出面推给挨着的方块。
  * 实测：压缩机输出面朝下、下面是输入总线，做出的钢块一个不剩全进了总线。
  */
-export function autoOutputText(a: AutoOutput | undefined): string {
+export function autoOutputText(a: AutoOutput | undefined, configurationOnly = false): string {
   if (!a) return ''
   const what = [a.items === true ? 'items' : '', a.fluids === true ? 'fluids' : ''].filter(Boolean).join(' and ')
   if (!what) return ''
   if (a.outputFaceIsFront === true) return `auto-output of ${what} on, but its output face is its front, so nothing is pushed out`
   if (typeof a.side !== 'string') return `auto-output of ${what} on`
   const to = a.to ? `${nameOf(a.to, { block: true }) ?? a.to.name ?? 'a block'} at ${formatPos(a.to)}` : 'nothing (no block stands there)'
+  if (configurationOnly) return `AUTO-OUTPUT of ${what} on: output face ${a.side}, facing ${to}`
   return `AUTO-OUTPUT of ${what} on: what it makes leaves by its ${a.side} face, into ${to}`
 }
 
@@ -1866,12 +1867,44 @@ function notPutText(notPut: unknown, inputSlots: unknown): string {
   return ` — NOT everything went in: ${parts.join('; ')}. Its input slots then held ${held.length > 0 ? held.map((o) => kindText(o.count, o)).join(', ') : 'nothing that could be read'}`
 }
 
+// Old bodies recorded only positive inventory deltas since loading. Do not attribute those to output-slot clicks.
+function otherNetGains(outputs: unknown, returns: unknown): Record<string, unknown>[] {
+  return kindList(outputs).map(o => {
+    const back = kindList(returns).filter(r => r.id === o.id && count(r.meta) === count(o.meta)).reduce((n, r) => n + count(r.count), 0)
+    return { ...o, count: count(o.count) - back }
+  }).filter(o => o.count > 0)
+}
+
+function processFluidFacts(fluids: unknown, changes: unknown, made: unknown): string[] {
+  const facts: string[] = []
+  const records = (v: unknown): Record<string, unknown>[] => Array.isArray(v) ? v.filter(isRecord) : []
+  const products = records(made), stockChanges = records(changes)
+  if (products.length) facts.push(`fluid products of observed completed rounds: ${products.map(f => tankText({ fluid: String(f.fluid), amount: count(f.amount) })).join(', ')}`)
+  const deltas = stockChanges.map(f => `${f.before} → ${f.after} (${count(f.delta) > 0 ? '+' : ''}${f.delta} mB) [fluid ${f.fluid}]`)
+  if (deltas.length) facts.push(`net tank change: ${deltas.join(', ')}`)
+  if (Array.isArray(fluids)) {
+    const holds = records(fluids).map(f => {
+      const hatch = typeof f.x === 'number'
+      const t = tankText({ fluid: typeof f.fluid === 'string' ? f.fluid : undefined, name: typeof f.fluidName === 'string' ? f.fluidName : typeof f.name === 'string' && !hatch ? f.name : undefined, amount: count(f.amount), capacity: typeof f.capacity === 'number' ? f.capacity : undefined } as Tank)
+      return hatch ? `${String(f.kind ?? 'hatch')} ${formatPos(f as { x: number; y: number; z: number })}: ${f.unreadable ? 'unreadable' : t}` : t
+    })
+    facts.push(`tank stock at end: ${holds.join('; ') || 'no tank reading'}`)
+  }
+  if (products.length && !Array.isArray(changes)) {
+    facts.push('no comparable before/after tank readings; fluid destination unobserved')
+  } else if (products.some(f => count(f.amount) > count(stockChanges.find(c => c.fluid === f.fluid)?.delta))) {
+    facts.push('not all fluid production appears as a net tank increase; destination unobserved')
+  }
+  return facts
+}
+
 export function processResultLines(result: Record<string, unknown>, params?: Record<string, unknown>): string[] {
   if (result.observedExisting === true) {
     return [
       'observed existing processing; no inputs added, no circuit or mould changed, not a batch started by this task',
       `already working on arrival: ${result.alreadyWorking === true}; outputs already present: ${compactJson(result.existingOutputs, 4000)}`,
       `completions observed (not proof of ownership or requested rounds): ${count(result.observedRounds)}; observed products: ${compactJson(result.observedMade, 4000)}`,
+      ...processFluidFacts(result.fluids, result.fluidChanges, result.observedMadeFluids),
       `actually collected: ${compactJson(result.outputs, 4000)}${typeof result.requestedOutputsCollected === 'boolean' ? `; requested counts collected: ${result.requestedOutputsCollected}` : ''}`,
       ...(Array.isArray(result.missingOutputs) && result.missingOutputs.length > 0 ? [`still missing: ${compactJson(result.missingOutputs, 4000)}${typeof result.stopReason === 'string' ? `; observation stopped: ${result.stopReason}` : ''}`] : []),
       ...(result.pickupLimited ? [`pickup limited by native whole/half clicks: ${compactJson(result.pickupLimited)}; that stack was left untouched, requested count NOT collected`] : []),
@@ -1879,53 +1912,44 @@ export function processResultLines(result: Record<string, unknown>, params?: Rec
       ...(result.timedOut === true ? ['wait limit reached; any ongoing recipe remains in the machine'] : []),
     ]
   }
-  const { put, outputs, timedOut, freeSlots, fluids, making, rounds, made, elsewhere, autoOutput, attached, notPut, inputSlots, returnedInputs, inputsNotReturned, returnFailure, ...rest } = result
-  const got = kindList(outputs)
+  const { put, outputs, outputsBasis: _outputsBasis, collected, timedOut, freeSlots, fluids, fluidChanges, madeFluids, making, rounds, made, elsewhere, autoOutput, attached, notPut, inputSlots, returnedInputs, inputsNotReturned, returnFailure, passedTo, ...rest } = result
+  const got = kindList(collected)
   const list = (v: unknown): string => kindList(v).map((o) => kindText(o.count, o)).join(', ')
   let line = `put ${count(put)} item(s) into the machine${notPutText(notPut, inputSlots)}`
   // 机器自己记着的：这次看着它做完了几轮、做出了什么（和取回了多少是两件事：产物可能被它自己、覆盖板或管道送走）
   if (count(rounds) > 0) line += `; it finished ${count(rounds)} round(s) of a recipe${kindList(made).length > 0 ? `, making ${list(made)} in all` : ''}`
-  line += `; took out: ${got.length > 0 ? list(outputs) : 'nothing'}`
+  if (Array.isArray(collected)) line += `; collected from output: ${list(got) || 'nothing'}`
+  else {
+    const other = list(otherNetGains(outputs, returnedInputs))
+    if (other || !kindList(returnedInputs).length) line += `; ${kindList(returnedInputs).length ? 'other net inventory gain' : 'net inventory gain'}: ${other || 'none'}`
+  }
   if (Array.isArray(returnedInputs)) line += `; inputs actually returned: ${list(returnedInputs) || 'none'}`
   if (Array.isArray(inputsNotReturned) && inputsNotReturned.length > 0) line += `; inputs NOT returned (consumed, moved on, or still inside): ${list(inputsNotReturned)}`
   if (typeof returnFailure === 'string') line += `; return attempt stopped: ${returnFailure}`
   line += makingText(making, params)
   const places = (Array.isArray(elsewhere) ? elsewhere : []).filter(isRecord)
-  if (places.length > 0 && kindList(made).length > 0) {
-    // 取回来的里面有它做的东西时才是“又一些”：取回来的也可能只是没用上的原料
-    const tookSome = got.some((o) => kindList(made).some((m) => m.id === o.id && m.meta === o.meta))
-    line += `; ${tookSome ? 'more of what it made' : 'what it made'} was moved on out of the machine while it worked, and is now in: ${places.map(elsewhereText).join('; ')}`
-  } else if (places.length > 0) {
-    // 身体读不懂的机器：它做了什么不知道，只知道它转的时候周围的容器里多了哪些不是原料的东西
-    line += `; while it ran, these turned up in the containers around it (not among the inputs; its recipes cannot be read, so that they came from it is likely, not certain): ${places.map(elsewhereText).join('; ')}`
-  } else if (got.length === 0 && count(rounds) > 0 && !Array.isArray(fluids)) {
-    line += '; nothing of what it made was left in the machine, and no container around it gained any: it went further than can be seen from the machine'
+  if (places.length > 0) {
+    line += `; nearby containers gained${kindList(made).length > 0 ? ' matching items' : ' items while it ran'}: ${places.map(elsewhereText).join('; ')}`
+  } else if (got.length === 0 && count(rounds) > 0 && kindList(made).length > 0 && (Array.isArray(collected) || !kindList(outputs).length)) {
+    line += '; no matching gain observed nearby; item destination unknown'
   }
   if (places.length > 0 || (got.length === 0 && count(rounds) > 0)) {
     // 东西自己离开机器的路：它自己的自动输出，和接在它身上的管道、漏斗
-    const auto = autoOutputText(isRecord(autoOutput) ? (autoOutput as AutoOutput) : undefined)
+    const auto = autoOutputText(isRecord(autoOutput) ? (autoOutput as AutoOutput) : undefined, true)
     if (auto) line += `; ${auto}`
     const plumbed = attachedText(Array.isArray(attached) ? (attached as AttachedBlock[]) : undefined)
     if (plumbed) line += `; ${plumbed}`
     // 身体那句英文说明讲的是同一件事，上面已经说全了
     delete rest.note
   }
-  if (Array.isArray(fluids)) {
-    // 多方块给的是输出仓（带坐标），单方块给的是它自己的罐
-    const hatches = fluids.some((f) => isRecord(f) && typeof f.x === 'number')
-    const holds = (fluids as unknown[])
-      .filter(isRecord)
-      .map((f) => {
-        const tank = tankText({ fluid: typeof f.fluid === 'string' ? f.fluid : undefined, name: typeof f.fluidName === 'string' ? f.fluidName : typeof f.name === 'string' && !hatches ? f.name : undefined, amount: count(f.amount), capacity: typeof f.capacity === 'number' ? f.capacity : undefined } as Tank)
-        return hatches ? `${typeof f.kind === 'string' ? f.kind : 'hatch'} ${formatPos(f as { x: number; y: number; z: number })}: ${tank}` : tank
-      })
-    line += `; it ran, and what it made is a fluid, not an item: it is in ${hatches ? "the machine's output hatches" : "the machine's tank"}, which now ${hatches ? 'hold' : 'holds'} ${holds.length > 0 ? holds.join('; ') : 'nothing readable'}. A fluid stays where it is until the machine's own auto-output, a pipe or a fluid container moves it`
-    // 身体那句英文说明讲的是同一件事，上面已经说全了
-    delete rest.note
+  if (Array.isArray(passedTo) && passedTo.length) {
+    line += `; containers connected to output bus (routing, not delivery): ${compactJson(passedTo)}`
+    delete rest.note // older bodies asserted delivery based only on this connection
   }
+  for (const fact of processFluidFacts(fluids, fluidChanges, madeFluids)) line += `; ${fact}`
+  if (Array.isArray(fluids)) delete rest.note // older bodies called a tank snapshot proof of fluid production
   if (timedOut === true) {
-    // 实测：等到头时身体把产物格里的和还没开始做的原料都取回来（算在 took out 里），机器只把手上那一轮做完，产物留在它里面
-    line += `; timedOut: the wait ran out before the machine was done. What was in its output slots and the inputs it had not started on were taken out (above); the recipe it is still on finishes in the machine, and what that makes stays in it`
+    line += '; timedOut: the wait limit was reached; later production and delivery were not observed'
     // 身体的说明就是这一句
     if (got.length === 0 && count(rounds) === 0) delete rest.note
   }

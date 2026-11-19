@@ -1239,7 +1239,7 @@ it('端到端：只有机器配方的东西（钢杆）→ 它查配方、找机
   llm.fallback = (req) => (JSON.stringify(req.body.messages.at(-1)).includes('任务 t3（process）失败了') ? { text: '钢杆车好了两根；组装机没电，开不了。' } : { text: '' })
   bridge.completeTask('Alu')
   await waitFor('second process task ended', () => bridge.bots.get('Alu')?.recent.some((x) => x.id === 't3'), 10_000).catch((e) => assert.fail(`${e.message}${diag()}`))
-  assert.match(seen(4), /任务 t2（process）完成了。 结果：put 2 item\(s\) into the machine; it finished 2 round\(s\) of a recipe, making 2× gregtech:gt\.metaitem\.01\/23305 \\"Steel Rod\\", 4× gregtech:gt\.metaitem\.01\/1305 \\"Small Pile of Steel Dust\\" in all; took out: 2× gregtech:gt\.metaitem\.01\/23305 \\"Steel Rod\\", 4× gregtech:gt\.metaitem\.01\/1305 \\"Small Pile of Steel Dust\\"; freeSlots \d+/)
+  assert.match(seen(4), /任务 t2（process）完成了。 结果：put 2 item\(s\) into the machine; it finished 2 round\(s\) of a recipe, making 2× gregtech:gt\.metaitem\.01\/23305 \\"Steel Rod\\", 4× gregtech:gt\.metaitem\.01\/1305 \\"Small Pile of Steel Dust\\" in all; net inventory gain: 2× gregtech:gt\.metaitem\.01\/23305 \\"Steel Rod\\", 4× gregtech:gt\.metaitem\.01\/1305 \\"Small Pile of Steel Dust\\"; freeSlots \d+/)
 
   // 3. 没电的机器：任务以 invalid 失败，它看到机器状态，告诉主人
   await waitFor('brain told Steve', () => bridge.commandLog.length === 1, 10_000).catch((e) => assert.fail(`${e.message}${diag()}`))
@@ -2415,7 +2415,7 @@ it('端到端：压缩机的物品自动输出开着，做出的钢块全进了�
   bridge.completeTask('Alu')
   await waitFor('told the owner', () => bridge.commandLog.some((c) => c.command.includes('我取回来了')), 15_000).catch((e) => assert.fail(`${e.message}\n${all()}${diag()}`))
   const text = all()
-  assert.match(text, /任务 t1（process）完成了。 结果：put 54 item\(s\) into the machine; it finished 6 round\(s\) of a recipe, making 6× gregtech:gt\.blockmetal6\/13 "Block of Steel" in all; took out: nothing; what it made was moved on out of the machine while it worked, and is now in: 6× gregtech:gt\.blockmetal6\/13 "Block of Steel" in "Input Bus \(LV\)" at \(10,64,-8\), against the down face of the machine; AUTO-OUTPUT of items on: what it makes leaves by its down face, into Input Bus \(LV\) at \(10,64,-8\); freeSlots \d+/)
+  assert.match(text, /任务 t1（process）完成了。 结果：put 54 item\(s\) into the machine; it finished 6 round\(s\) of a recipe, making 6× gregtech:gt\.blockmetal6\/13 "Block of Steel" in all; net inventory gain: none; nearby containers gained matching items: 6× gregtech:gt\.blockmetal6\/13 "Block of Steel" in "Input Bus \(LV\)" at \(10,64,-8\), against the down face of the machine; AUTO-OUTPUT of items on: output face down, facing Input Bus \(LV\) at \(10,64,-8\); freeSlots \d+/)
   assert.equal(alu.inventory.filter((i) => i.id === BLOCK.id && i.meta === BLOCK.meta).reduce((n, i) => n + i.count, 0), 6)
   assert.deepEqual(bridge.containers.find((c) => c.x === BUS.x && c.y === BUS.y && c.z === BUS.z)!.items, [])
 
@@ -2486,7 +2486,7 @@ it('端到端：钢板在流体提取机里化成了熔融钢，隔壁的固化�
   await waitFor('told the owner', () => bridge.commandLog.some((c) => c.command.includes('熔融钢已经到固化器了')), 15_000).catch((e) => assert.fail(`${e.message}\n${all()}${diag()}`))
 
   const text = all()
-  assert.match(text, /任务 t1（process）完成了。 结果：put 2 item\(s\) into the machine; took out: nothing; it ran, and what it made is a fluid, not an item: it is in the machine's tank, which now holds 288 of 16000 mB Molten Steel \[fluid molten\.steel\]\. A fluid stays where it is until the machine's own auto-output, a pipe or a fluid container moves it; freeSlots 36/)
+  assert.match(text, /任务 t1（process）完成了。 结果：put 2 item\(s\) into the machine; net inventory gain: none; tank stock at end: 288 of 16000 mB Molten Steel \[fluid molten\.steel\]; freeSlots 36/)
   // 界面上格子以外的东西：开关关着、只是显示的那个、罐那一格
   assert.match(text, /Its controls besides slots \(3; the names are the screen's own, use_control works them\):\non panel "basicmachine\.fluidextractor\.tier\.02":\n- fluidAutoOutput:0 \[switch\]: off\n- powerfail:0 \[switch, display only\]: off\n- auto_sync:tank:0 \[fluid slot\]: 288 of 16000 mB Molten Steel \[fluid molten\.steel\]; gives to a fluid container on your cursor\n/)
   // 身体收到的就是“按这个控件”；按完开关是开的，提取机的罐空了

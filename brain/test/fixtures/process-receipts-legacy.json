@@ -1,0 +1,198 @@
+{
+  "beforeCasings": {
+    "id": "tmwnctco2",
+    "type": "process",
+    "params": {
+      "type": "process",
+      "machine": {
+        "x": 10,
+        "y": 190,
+        "z": 7
+      },
+      "inputs": [
+        {
+          "id": "gregtech:gt.blockmachines",
+          "meta": 1246,
+          "count": 4
+        },
+        {
+          "id": "gregtech:gt.blockcasings",
+          "meta": 1,
+          "count": 2
+        }
+      ],
+      "circuit": 0,
+      "expect": [
+        {
+          "id": "gregtech:gt.blockmachines",
+          "meta": 11,
+          "count": 2
+        }
+      ]
+    },
+    "state": "done",
+    "progress": {
+      "done": 0,
+      "total": 0,
+      "phase": "collecting the output",
+      "note": ""
+    },
+    "createdAt": 1795080895218,
+    "startedAt": 1795080895219,
+    "finishedAt": 1795080897996,
+    "result": {
+      "put": 6,
+      "outputs": [],
+      "returnedInputs": [],
+      "inputsNotReturned": [
+        {
+          "id": "gregtech:gt.blockmachines",
+          "meta": 1246,
+          "count": 4
+        },
+        {
+          "id": "gregtech:gt.blockcasings",
+          "meta": 1,
+          "count": 2
+        }
+      ],
+      "making": [
+        {
+          "id": "gregtech:gt.blockmachines",
+          "meta": 11,
+          "count": 1,
+          "name": "LV Machine Hull",
+          "fluidContainer": {
+            "capacity": 2000,
+            "amount": 0
+          }
+        }
+      ],
+      "rounds": 2,
+      "made": [
+        {
+          "id": "gregtech:gt.blockmachines",
+          "meta": 11,
+          "name": "LV Machine Hull",
+          "fluidContainer": {
+            "capacity": 2000,
+            "amount": 0
+          },
+          "count": 2
+        }
+      ],
+      "elsewhere": [
+        {
+          "x": 9,
+          "y": 190,
+          "z": 7,
+          "name": "Chest",
+          "side": "west",
+          "items": [
+            {
+              "id": "gregtech:gt.blockmachines",
+              "meta": 11,
+              "count": 2,
+              "name": "LV Machine Hull",
+              "fluidContainer": {
+                "capacity": 2000,
+                "amount": 0
+              }
+            }
+          ]
+        }
+      ],
+      "autoOutput": {
+        "items": true,
+        "fluids": false,
+        "side": "west",
+        "to": {
+          "x": 9,
+          "y": 190,
+          "z": 7,
+          "name": "Chest"
+        }
+      },
+      "note": "the machine ran and gave no item: what it made is a fluid, which stays in its tank (fluids shows what is there now)",
+      "fluids": [
+        {
+          "fluid": "molten.plastic",
+          "name": "Molten Polyethylene",
+          "amount": 15516,
+          "capacity": 64000
+        }
+      ],
+      "freeSlots": 36
+    }
+  },
+  "beforeReturn": {
+    "id": "tmwnctco4",
+    "type": "process",
+    "params": {
+      "type": "process",
+      "machine": {
+        "x": 10,
+        "y": 190,
+        "z": 7
+      },
+      "inputs": [
+        {
+          "id": "minecraft:bedrock",
+          "count": 2
+        }
+      ],
+      "wait": 5
+    },
+    "state": "failed",
+    "progress": {
+      "done": 0,
+      "total": 0,
+      "phase": "taking the inputs back",
+      "note": ""
+    },
+    "createdAt": 1795080904395,
+    "startedAt": 1795080904395,
+    "finishedAt": 1795080908393,
+    "result": {
+      "put": 2,
+      "outputs": [
+        {
+          "id": "minecraft:bedrock",
+          "meta": 0,
+          "count": 2,
+          "name": "Bedrock"
+        }
+      ],
+      "returnedInputs": [
+        {
+          "id": "minecraft:bedrock",
+          "meta": 0,
+          "name": "Bedrock",
+          "count": 2
+        }
+      ],
+      "inputsNotReturned": [],
+      "freeSlots": 34
+    },
+    "error": {
+      "code": "invalid",
+      "message": "no recipe start was observed: check power, circuit, fluid and recipe compatibility. returnedInputs lists only inputs actually taken back; inputsNotReturned may have been consumed, moved on, or remain in the machine.",
+      "detail": {
+        "x": 10,
+        "y": 190,
+        "z": 7,
+        "name": "Universal Macerator",
+        "id": "gregtech:gt.blockmachines",
+        "meta": 303,
+        "recipes": "Macerator",
+        "recipeKey": "gt.recipe.macerator",
+        "tier": "HV",
+        "inputSlots": 1,
+        "outputSlots": 2,
+        "active": false,
+        "storedEU": 32768,
+        "inputVoltage": 512
+      }
+    }
+  }
+}

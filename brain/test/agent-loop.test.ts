@@ -634,7 +634,7 @@ describe('agent 的一轮决策', () => {
     await h.agent.whenIdle()
     assert.match(
       h.llm.lastUserText(0),
-      /任务 t13（process）完成了。 结果：put 2 item\(s\) into the machine; took out: 2× gregtech:gt\.metaitem\.01\/23305 "Steel Rod", 4× gregtech:gt\.metaitem\.01\/1305 "Small Pile of Steel Dust"; freeSlots 20/,
+      /任务 t13（process）完成了。 结果：put 2 item\(s\) into the machine; net inventory gain: 2× gregtech:gt\.metaitem\.01\/23305 "Steel Rod", 4× gregtech:gt\.metaitem\.01\/1305 "Small Pile of Steel Dust"; freeSlots 20/,
     )
 
     // 没开工：真实 mod 的原话，detail 是那台机器的状态
@@ -645,7 +645,7 @@ describe('agent 的一轮决策', () => {
     const unpowered = h.llm.lastUserText(1)
     assert.match(unpowered, /任务 t14（process）失败了：invalid — the machine did not start/)
     assert.match(unpowered, /machine "Basic Assembling Machine" at \(-38,99,-80\): runs Assembler recipes, tier LV, 6 input slot\(s\), NO POWER \(0 EU stored\), idle/)
-    assert.match(unpowered, /已完成的部分：put 7 item\(s\) into the machine; took out: nothing; freeSlots 20/)
+    assert.match(unpowered, /已完成的部分：put 7 item\(s\) into the machine; net inventory gain: none; freeSlots 20/)
 
     // 有电又空闲只是此刻状态，也可能刚完成高速加工；不再据此断言配方有误。
     h.agent.handleEvent(
@@ -658,7 +658,7 @@ describe('agent 的一轮决策', () => {
     // 等到头还没做完：做好的取回来了，还没开始做的原料也取回来了（测试服上实测：54 个钢锭等 5 秒，取回 36 个），机器只把手上那一轮做完
     h.agent.handleEvent(taskEnded('t16', 'done', { type: 'process', result: { put: 64, outputs: [{ id: GT, meta: 23305, name: 'Steel Rod', count: 20 }, { id: GT, meta: 11305, name: 'Steel Ingot', count: 43 }], timedOut: true, freeSlots: 19 } }))
     await h.agent.whenIdle()
-    assert.match(h.llm.lastUserText(3), /took out: 20× gregtech:gt\.metaitem\.01\/23305 "Steel Rod", 43× gregtech:gt\.metaitem\.01\/11305 "Steel Ingot"; timedOut: the wait ran out before the machine was done\. What was in its output slots and the inputs it had not started on were taken out \(above\); the recipe it is still on finishes in the machine, and what that makes stays in it; freeSlots 19/)
+    assert.match(h.llm.lastUserText(3), /net inventory gain: 20× gregtech:gt\.metaitem\.01\/23305 "Steel Rod", 43× gregtech:gt\.metaitem\.01\/11305 "Steel Ingot"; timedOut: the wait limit was reached; later production and delivery were not observed; freeSlots 19/)
   })
 
   it('放方块的任务（意见簿：fill_area 报放了 18 个，实际先放了 10 个钢管道方块）：模型看到这些方块是从哪几种物品放的；只放要的那种、不够就停时，缺的是哪个 meta', async (t) => {
@@ -714,10 +714,10 @@ describe('agent 的一轮决策', () => {
     await h.agent.whenIdle()
     assert.equal(
       h.llm.lastUserText(0).match(/任务 t30（process）.*/)?.[0],
-      '任务 t30（process）完成了。 结果：put 54 item(s) into the machine; it finished 6 round(s) of a recipe, making 6× gregtech:gt.blockmetal6/13 "Block of Steel" in all; took out: nothing; when it started it set out to make 1× gregtech:gt.blockmetal6/13 "Block of Steel"; what it made was moved on out of the machine while it worked, and is now in: 6× gregtech:gt.blockmetal6/13 "Block of Steel" in "Input Bus (LV)" at (-532,71,58), against the down face of the machine; AUTO-OUTPUT of items on: what it makes leaves by its down face, into Input Bus (LV) at (-532,71,58); freeSlots 36',
+      '任务 t30（process）完成了。 结果：put 54 item(s) into the machine; it finished 6 round(s) of a recipe, making 6× gregtech:gt.blockmetal6/13 "Block of Steel" in all; net inventory gain: none; when it started it set out to make 1× gregtech:gt.blockmetal6/13 "Block of Steel"; nearby containers gained matching items: 6× gregtech:gt.blockmetal6/13 "Block of Steel" in "Input Bus (LV)" at (-532,71,58), against the down face of the machine; AUTO-OUTPUT of items on: output face down, facing Input Bus (LV) at (-532,71,58); freeSlots 36',
     )
 
-    // 输出面接的是管道：做出来了，周围哪个容器都没多出来。照实说去了看不到的地方，接在它身上的管道写出来
+    // 输出面接的是管道：做出来了，周围哪个容器都没多出来。去向未知，接在它身上的管道写出来
     const pipe = { x: -532, y: 71, z: 58, name: 'Steel Item Pipe', kind: 'item pipe' }
     h.agent.handleEvent(
       taskEnded('t31', 'done', {
@@ -727,7 +727,7 @@ describe('agent 的一轮决策', () => {
     )
     await h.agent.whenIdle()
     const piped = h.llm.lastUserText(1)
-    assert.match(piped, /任务 t31（process）完成了。 结果：put 9 item\(s\) into the machine; it finished 1 round\(s\) of a recipe, making 1× gregtech:gt\.blockmetal6\/13 "Block of Steel" in all; took out: nothing; nothing of what it made was left in the machine, and no container around it gained any: it went further than can be seen from the machine; AUTO-OUTPUT of items on: what it makes leaves by its down face, into Steel Item Pipe at \(-532,71,58\); AUTOMATED: Steel Item Pipe at \(-532,71,58\) feeds or drains it; freeSlots 36/)
+    assert.match(piped, /任务 t31（process）完成了。 结果：put 9 item\(s\) into the machine; it finished 1 round\(s\) of a recipe, making 1× gregtech:gt\.blockmetal6\/13 "Block of Steel" in all; net inventory gain: none; no matching gain observed nearby; item destination unknown; AUTO-OUTPUT of items on: output face down, facing Steel Item Pipe at \(-532,71,58\); AUTOMATED: Steel Item Pipe at \(-532,71,58\) feeds or drains it; freeSlots 36/)
   })
 
   it('放下就走的加工任务（leave）：结束时模型看到料放进去了、机器开工了，这一轮和全部几轮大概还要多久，产物和模具留在机器里怎么取，电路现在是几原来是几', async (t) => {

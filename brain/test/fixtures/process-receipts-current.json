@@ -1,0 +1,114 @@
+{
+  "flasks": {
+    "id": "tmwndde3d",
+    "type": "process",
+    "params": {
+      "type": "process",
+      "machine": {
+        "x": 10,
+        "y": 190,
+        "z": 7
+      },
+      "inputs": [
+        {
+          "id": "gregtech:gt.Volumetric_Flask",
+          "meta": 0,
+          "count": 32
+        }
+      ],
+      "circuit": 1,
+      "expect": [
+        {
+          "id": "gregtech:gt.Volumetric_Flask",
+          "meta": 0,
+          "count": 32
+        }
+      ],
+      "wait": 5
+    },
+    "state": "done",
+    "progress": {
+      "done": 0,
+      "total": 0,
+      "phase": "collecting the output",
+      "note": ""
+    },
+    "createdAt": 1795081875783,
+    "startedAt": 1795081875783,
+    "finishedAt": 1795081882281,
+    "result": {
+      "put": 32,
+      "outputs": [
+        {
+          "id": "gregtech:gt.Volumetric_Flask",
+          "meta": 0,
+          "count": 30,
+          "name": "Volumetric Flask",
+          "fluidContainer": {
+            "capacity": 144,
+            "amount": 0
+          }
+        }
+      ],
+      "outputsBasis": "positiveInventoryDeltaSinceLoad",
+      "collected": [
+        {
+          "id": "gregtech:gt.Volumetric_Flask",
+          "meta": 0,
+          "name": "Volumetric Flask",
+          "fluidContainer": {
+            "capacity": 144,
+            "amount": 0
+          },
+          "count": 11
+        }
+      ],
+      "returnedInputs": [
+        {
+          "id": "gregtech:gt.Volumetric_Flask",
+          "meta": 0,
+          "name": "Volumetric Flask",
+          "fluidContainer": {
+            "capacity": 1000,
+            "amount": 0
+          },
+          "count": 19
+        }
+      ],
+      "inputsNotReturned": [
+        {
+          "id": "gregtech:gt.Volumetric_Flask",
+          "meta": 0,
+          "count": 13
+        }
+      ],
+      "making": [
+        {
+          "id": "gregtech:gt.Volumetric_Flask",
+          "meta": 0,
+          "count": 1,
+          "name": "Volumetric Flask",
+          "fluidContainer": {
+            "capacity": 144,
+            "amount": 0
+          }
+        }
+      ],
+      "rounds": 12,
+      "made": [
+        {
+          "id": "gregtech:gt.Volumetric_Flask",
+          "meta": 0,
+          "name": "Volumetric Flask",
+          "fluidContainer": {
+            "capacity": 144,
+            "amount": 0
+          },
+          "count": 12
+        }
+      ],
+      "timedOut": true,
+      "freeSlots": 34
+    }
+  }
+}

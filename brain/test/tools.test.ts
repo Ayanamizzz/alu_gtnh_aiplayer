@@ -979,7 +979,7 @@ describe('任务类工具', () => {
     })
     const [t2, t1] = (await s.run('task_status')).content.split('\n').slice(-2)
     assert.match(t1!, /\. Programmed circuit: now 9, it was 1; it stays 9 for the rounds still to come, and the body sets it back to 1 once this batch is done \(the machine runs no recipe and nothing this batch uses up is left in its input slots\); you are told when it has, or why it could not/)
-    assert.match(t2!, /partial result: put 2 item\(s\) into the machine — NOT everything went in: 1× gregtech:gt\.metaitem\.01\/32350 "Extruder Shape \(Plate\)" did not go in \(you carry 1\)\. Its input slots then held 1× gregtech:gt\.metaitem\.01\/32351 "Extruder Shape \(Rod\)", 2× gregtech:gt\.metaitem\.01\/11305 "Steel Ingot"; took out: nothing/)
+    assert.match(t2!, /partial result: put 2 item\(s\) into the machine — NOT everything went in: 1× gregtech:gt\.metaitem\.01\/32350 "Extruder Shape \(Plate\)" did not go in \(you carry 1\)\. Its input slots then held 1× gregtech:gt\.metaitem\.01\/32351 "Extruder Shape \(Rod\)", 2× gregtech:gt\.metaitem\.01\/11305 "Steel Ingot"; net inventory gain: none/)
   })
 
   it('机器做的不是要的东西（意见簿 f5：组装机带着电路 1，铁杆 + 铁环做成了铁栅栏、被自动输出推进箱子）：任务是失败，取回来的没用上的原料不说成“又一些产物”，铁栅栏在哪写着', async (t) => {
@@ -1013,8 +1013,8 @@ describe('任务类工具', () => {
     })
     const line = (await s.run('task_status')).content.split('\n').at(-1)!
     assert.match(line, /t1 process \[failed\] error=invalid: the machine ran another recipe than the one these inputs were for: it made \(or was making\) 1x Iron Fence/)
-    assert.match(line, /partial result: put 6 item\(s\) into the machine; it finished 1 round\(s\) of a recipe, making 1× gregtech:gt\.blockfencemetal "Iron Fence" in all; took out: 4× gregtech:gt\.metaitem\.01\/28032 "Iron Ring", 1× gregtech:gt\.metaitem\.01\/23032 "Iron Rod"/)
-    assert.match(line, /; what it made was moved on out of the machine while it worked, and is now in: 1× gregtech:gt\.blockfencemetal "Iron Fence" in "Diamond Chest" at \(-537,69,40\), against the west face/)
+    assert.match(line, /partial result: put 6 item\(s\) into the machine; it finished 1 round\(s\) of a recipe, making 1× gregtech:gt\.blockfencemetal "Iron Fence" in all; net inventory gain: 4× gregtech:gt\.metaitem\.01\/28032 "Iron Ring", 1× gregtech:gt\.metaitem\.01\/23032 "Iron Rod"/)
+    assert.match(line, /; nearby containers gained matching items: 1× gregtech:gt\.blockfencemetal "Iron Fence" in "Diamond Chest" at \(-537,69,40\), against the west face/)
   })
 
   it('挖东西的区域任务可以指定背包满了怎么办（overflow）；别的取值被拒绝', async (t) => {
