@@ -174,7 +174,7 @@ public final class GotoTask extends MoveTask {
         }
         // Highest first, as a pillar is taken down.
         toTakeBack.sort((a, b) -> Integer.compare(b.y, a.y));
-        digger = new Digger(bot);
+        digger = new Digger(bot, nav.maxDrop());
         phase = "taking back climbing blocks";
     }
 

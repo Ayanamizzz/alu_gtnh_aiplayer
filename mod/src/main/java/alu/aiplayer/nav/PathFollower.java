@@ -53,7 +53,7 @@ public final class PathFollower {
     public String failBlock;
 
     public PathFollower(Bot bot, List<Step> steps, int ox, int oy, int oz, NavWorld.BreakRule rule, boolean gentle,
-        TerrainLog log, boolean swim) {
+        TerrainLog log, boolean swim, int maxDrop) {
         this.swim = swim;
         this.log = log;
         this.gentle = gentle;
@@ -63,7 +63,7 @@ public final class PathFollower {
         this.oy = oy;
         this.oz = oz;
         this.rule = rule;
-        this.digger = new Digger(bot);
+        this.digger = new Digger(bot, maxDrop);
     }
 
     public int stepsDone() {

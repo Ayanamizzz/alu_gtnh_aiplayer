@@ -111,6 +111,11 @@ public final class Navigator {
         maxDrop = blocks;
     }
 
+    /** The same limit applies when a route or work action removes the floor itself. */
+    public int maxDrop() {
+        return maxDrop >= 0 ? maxDrop : bot.invulnerable ? PathSearch.FEARLESS_DROP : PathSearch.SAFE_DROP;
+    }
+
     /** Interactions may use an already reachable airborne position; this never plans a flight. */
     public void interaction(boolean currentOnly) {
         this.interaction = true;
@@ -198,7 +203,7 @@ public final class Navigator {
                 goal,
                 probing || (!gentle && mayPillar && Rules.scaffold(p) != null),
                 gentle ? MAX_NODES : MAX_NODES_CLIMBING,
-                maxDrop >= 0 ? maxDrop : bot.invulnerable ? PathSearch.FEARLESS_DROP : PathSearch.SAFE_DROP,
+                maxDrop(),
                 swim);
         }
 
@@ -247,7 +252,8 @@ public final class Navigator {
             rule,
             gentle,
             bot.terrain(),
-            swim);
+            swim,
+            maxDrop());
         gentle = true;
         return Status.WORKING;
     }
@@ -265,7 +271,7 @@ public final class Navigator {
         failCode = code;
         failMessage = message;
         if ("unreachable".equals(code)) failMessage += " (walking permissions: dig=" + (rule != Rules.NO_BREAK)
-            + ", climb=" + mayPillar + ", maxDrop=" + (maxDrop >= 0 ? maxDrop : bot.invulnerable ? PathSearch.FEARLESS_DROP : PathSearch.SAFE_DROP) + ")";
+            + ", climb=" + mayPillar + ", maxDrop=" + maxDrop() + ")";
         failBlock = block;
         stop();
         return Status.FAILED;

@@ -25,6 +25,8 @@ public final class Digger {
     private static final int COOLDOWN = 5;
 
     private final Bot bot;
+    private final int maxDrop;
+    public static final String UNSAFE_FOOTING = "unsafe_footing";
     private int x, y, z;
     private int face;
     private int phase; // 0 idle, 1 start, 2 digging, 3 cooldown
@@ -43,8 +45,9 @@ public final class Digger {
     /** With no_tool: what the block asks of a tool ({@link Tools#needs}). */
     public com.google.gson.JsonObject failNeeds;
 
-    public Digger(Bot bot) {
+    public Digger(Bot bot, int maxDrop) {
         this.bot = bot;
+        this.maxDrop = maxDrop;
     }
 
     public boolean busy() {
@@ -77,6 +80,7 @@ public final class Digger {
                     ticks = 0;
                     return Status.WORKING;
                 }
+                if (!finishSent && DigFooting.unsafe(p, x, y, z, maxDrop)) return unsafeFooting();
                 if (!Reach.canReach(p, x, y, z)) {
                     // Pushed or carried away mid-dig (a current, a fall): the server would ignore the finish.
                     abort();
@@ -124,6 +128,7 @@ public final class Digger {
             return Status.DONE;
         }
         if (!Reach.canReach(p, x, y, z)) return fail("out_of_reach", "the block is out of reach");
+        if (DigFooting.unsafe(p, x, y, z, maxDrop)) return unsafeFooting(); // start can break it instantly
         Tools.Choice choice = Tools.best(p, w, x, y, z);
         if (choice == null) return fail("unbreakable", "the block cannot be broken");
         if (!choice.worthwhile()) {
@@ -162,6 +167,11 @@ public final class Digger {
         expected = Math.max(1, choice.ticks() - 1);
         limit = choice.ticks() * 2 + 60;
         return Status.WORKING;
+    }
+
+    private Status unsafeFooting() {
+        abort();
+        return fail(UNSAFE_FOOTING, "removing this footing would exceed maxDrop=" + maxDrop);
     }
 
     private Status fail(String code, String message) {

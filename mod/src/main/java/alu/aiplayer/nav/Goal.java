@@ -1,6 +1,8 @@
 package alu.aiplayer.nav;
 
+import alu.aiplayer.act.DigFooting;
 import alu.aiplayer.act.Reach;
+import alu.aiplayer.bot.Bot;
 
 /** Where a path should end. Positions are feet cells. */
 public abstract class Goal {
@@ -169,6 +171,35 @@ public abstract class Goal {
                 // Every block of height still to gain costs a jump at the least; saying so keeps the search from
                 // wandering the ground when the only way is up.
                 return flat * WALK + (dy > 0 ? dy * 9.0 : (dy < -3 ? (-3 - dy) * 2.0 : 0.0));
+            }
+        };
+    }
+
+    /** Move off the block before digging. An adjacent feet cell is not enough if a shoulder is still
+     * balancing on the target; test the living body and the remaining landing again on arrival. */
+    public static Goal besideFooting(final Bot bot, final int bx, final int by, final int bz, final int maxDrop) {
+        final Goal reach = reach(bx, by, bz, false);
+        return new Goal() {
+
+            @Override
+            public boolean reached(int x, int y, int z) {
+                if (x == bx && z == bz || !reach.reached(x, y, z)) return false;
+                // The route's start is the rounded body cell, even when only its shoulder rests on a block
+                // behind it. Do not accept that empty path instead of looking for actual ground on the far side.
+                return x != bot.blockX() || y != bot.blockY() || z != bot.blockZ()
+                    || DigFooting.canCenterBeside(bot.player(), bx, by, bz, maxDrop);
+            }
+
+            @Override
+            public boolean reached(net.minecraft.entity.player.EntityPlayerMP p) {
+                return (p.onGround || p.isInWater()) && (net.minecraft.util.MathHelper.floor_double(p.posX) != bx
+                    || net.minecraft.util.MathHelper.floor_double(p.posZ) != bz) && reach.reached(p)
+                    && !DigFooting.unsafe(p, bx, by, bz, maxDrop);
+            }
+
+            @Override
+            public double heuristic(int x, int y, int z) {
+                return reach.heuristic(x, y, z);
             }
         };
     }

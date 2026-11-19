@@ -89,6 +89,10 @@ abstract class AreaTask extends Task {
     private final Map<Long, Integer> attempts = new HashMap<>();
     private int cooldown;
     private boolean walking;
+    /** Set only on the short trip to get off a target before breaking it. */
+    private Goal footingGoal;
+    private long lastFootingCell = Long.MIN_VALUE;
+    private int footingTrips;
     private int recentre;
     private int recentred;
     private int airborne;
@@ -130,7 +134,7 @@ abstract class AreaTask extends Task {
         nav.explainClimbing(true);
         if (travelMaxDrop >= 0) nav.maxDrop(travelMaxDrop);
         nav.interaction(false);
-        digger = new Digger(bot);
+        digger = new Digger(bot, nav.maxDrop());
         scaffoldBefore = new HashSet<>(bot.scaffoldCells());
     }
 
@@ -184,9 +188,19 @@ abstract class AreaTask extends Task {
         }
         if (walking) {
             Navigator.Status st = nav.tick();
-            if (st == Navigator.Status.WORKING) return Act.BUSY;
+            if (st == Navigator.Status.WORKING) {
+                // If only the centre of the current cell has independent footing, an empty cell-to-cell path
+                // won't finish the step. Align inside it, then let the navigator test the live stance again.
+                if (footingGoal != null && p.onGround && footingGoal.reached(bot.blockX(), bot.blockY(), bot.blockZ())) {
+                    bot.motion.moveToward(p, bot.blockX() + 0.5, bot.blockZ() + 0.5);
+                }
+                return Act.BUSY;
+            }
             walking = false;
-            if (st == Navigator.Status.FAILED) return walkFailed(x, y, z);
+            if (footingGoal != null) {
+                footingGoal = null;
+                if (st == Navigator.Status.FAILED) return keepFooting(x, y, z, digger.failMessage + "; no reachable safe stance");
+            } else if (st == Navigator.Status.FAILED) return walkFailed(x, y, z);
         }
         if (w.blockExists(x, y, z)) {
             Block block = w.getBlock(x, y, z);
@@ -237,6 +251,21 @@ abstract class AreaTask extends Task {
 
     private Act digFailed(int x, int y, int z) {
         String code = digger.failCode;
+        if (Digger.UNSAFE_FOOTING.equals(code)) {
+            long cell = key(x, y, z);
+            if (lastFootingCell != cell) {
+                lastFootingCell = cell;
+                footingTrips = 0;
+            }
+            if (++footingTrips > MAX_ATTEMPTS_PER_CELL) {
+                return keepFooting(x, y, z, digger.failMessage + "; could not stay on safe footing");
+            }
+            // Walk to existing footing; don't consume filler or dig a different block to escape this one.
+            footingGoal = Goal.besideFooting(bot, x, y, z, nav.maxDrop());
+            nav.go(footingGoal, Rules.NO_BREAK, false);
+            walking = true;
+            return Act.BUSY;
+        }
         if ("no_tool".equals(code) && !stopsWithoutTool()) {
             noToolFor.add(digger.failBlock);
             String why = "no tool for " + digger.failBlock + needsWords(digger.failNeeds);
@@ -253,6 +282,12 @@ abstract class AreaTask extends Task {
         }
         if ("out_of_reach".equals(code)) return Act.BUSY; // moved since the check; the next tick walks closer
         skip(x, y, z, code == null ? "failed" : code);
+        return Act.SKIPPED;
+    }
+
+    private Act keepFooting(int x, int y, int z, String reason) {
+        cellWhy.put(key(x, y, z), reason); // also explains a climbing block left standing during cleanup
+        skip(x, y, z, reason);
         return Act.SKIPPED;
     }
 
@@ -786,18 +821,6 @@ abstract class AreaTask extends Task {
         }
         if (tidyCurrent != null) {
             int[] c = tidyCurrent;
-            // Taking away one's footing is a drop too; cleanup must honour the same limit as approaching.
-            if (!digger.busy() && travelMaxDrop >= 0 && c[1] <= p.posY && c[1] + 1 >= p.posY - 0.1
-                && p.boundingBox.maxX > c[0] && p.boundingBox.minX < c[0] + 1
-                && p.boundingBox.maxZ > c[2] && p.boundingBox.minZ < c[2] + 1) {
-                double below = NavWorld.heightAboveSupport(w, c[0] + 0.5, c[1], c[2] + 0.5, travelMaxDrop + 1);
-                if (below < 0 || below + 1 > travelMaxDrop) {
-                    scaffoldLeft.add(c);
-                    cellWhy.put(key(c[0], c[1], c[2]), "removing this footing would exceed maxDrop=" + travelMaxDrop);
-                    tidyCurrent = null;
-                    return true;
-                }
-            }
             Act a = digCell(c[0], c[1], c[2]);
             if (a == Act.BUSY || a == Act.FAILED) return true;
             if (a == Act.OK) {
