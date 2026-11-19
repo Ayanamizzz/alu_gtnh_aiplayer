@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Real GT cover regression. Overwrites the small platform at (16,100,8) in THIS
-checkout's disposable test world. RCON arranges fixtures, all interactions run as
-a player. Example: --fixture-world World-fb4 --out /tmp/covered-machine.json
+checkout's disposable test world and clears dropped items there between resets.
+RCON arranges fixtures, all interactions run as a player. Example: --fixture-world World-fb4 --out /tmp/covered-machine.json
 """
 import argparse
 import json
@@ -69,10 +69,18 @@ def main():
         rc('setblock ' + POS + ' air')
         rc('setblock ' + POS + ' gregtech:gt.blockmachines 1 replace {nbtVersion:509054265,mID:393s,mFacing:1s,mMainFacing:4' + extra + '}')
         rc('tp ' + BOT + ' 16.5 100 11.5')
-        rc('clear ' + BOT)
         time.sleep(.4)
+        # Replacing the last washer can drop its old input as an entity. A 12-item pickup while walking to
+        # the machine is not a 12-item withdrawal. Capture the fixture debris, then remove it before measuring.
+        nearby = call('world.entities', **AT, radius=5)['entities']
+        drops = [e['item'] for e in nearby if e.get('item')]
+        report.setdefault('fixtureDrops', []).append(drops)
+        rc('cofh killall item')
+        rc('clear ' + BOT)
+        assert not any(e.get('item') for e in call('world.entities', **AT, radius=5)['entities'])
         if cover_id is not None:
             before = state()
+            assert before['carrying'] == 0, before
             assert len(before['observed']) == 1 and before['observed'][0]['id'] == 'gregtech:gt.metaitem.01', before
             assert before['observed'][0]['meta'] == FILTER and before['covers'][0]['d']['filter']['Items'], before
             assert any(s['IntSlot'] == 5 and s['count'] == 12 for s in before['input']), before
