@@ -11,7 +11,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 
 import net.minecraft.entity.player.EntityPlayer;
@@ -57,7 +57,6 @@ public final class BotManager implements TaskQueue.Listener {
         t.setDaemon(true);
         return t;
     });
-    private volatile Future<?> lastWrite;
     /** Programmed circuits that process tasks with leave set, to be set back once their batch is done. */
     private final List<alu.aiplayer.task.CircuitWatch> circuitWatches = new ArrayList<>();
     private int ticksSinceWatch;
@@ -132,7 +131,7 @@ public final class BotManager implements TaskQueue.Listener {
             if (b.online()) logout(b, "server stopping", true);
         }
         save();
-        awaitWrites();
+        finishWrites();
     }
 
     public void tick() {
@@ -574,22 +573,34 @@ public final class BotManager implements TaskQueue.Listener {
             .create()
             .toJson(root)
             .getBytes(StandardCharsets.UTF_8);
-        lastWrite = writer.submit(() -> {
+        Runnable write = () -> {
             try {
                 AtomicFile.write(file, bytes, true);
             } catch (Throwable e) {
                 AiPlayerMod.LOG.error("Cannot save {}", file, e);
             }
-        });
+        };
+        try {
+            writer.execute(write);
+        } catch (RejectedExecutionException e) {
+            // The writer has finished because the server is stopping; a late save is written here instead.
+            write.run();
+        }
     }
 
-    /** Waits for the writer to finish, so that stopping the server never cuts the last save short. */
-    private void awaitWrites() {
-        Future<?> f = lastWrite;
-        if (f == null) return;
+    /**
+     * Lets the writer finish the saves it has and end its thread, so that stopping the server never cuts the last save
+     * short, and a world opened again in single player does not leave an idle thread behind.
+     */
+    private void finishWrites() {
+        writer.shutdown();
         try {
-            f.get(30, TimeUnit.SECONDS);
-        } catch (Exception e) {
+            if (!writer.awaitTermination(30, TimeUnit.SECONDS)) {
+                AiPlayerMod.LOG.error("The last save of {} did not finish", saveFile);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread()
+                .interrupt();
             AiPlayerMod.LOG.error("The last save of {} did not finish", saveFile, e);
         }
     }
